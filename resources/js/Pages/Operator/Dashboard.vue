@@ -1,13 +1,13 @@
-<script setup lang="ts">
+<script setup>
 import { computed } from 'vue'
 import { usePage, router } from '@inertiajs/vue3'
+// （Ziggy を使っているなら）import route from 'ziggy-js'
 
 const page = usePage()
-// Breeze が共有してくれるユーザ（未ログインなら null）
-const user    = computed(() => (page.props.value as any)?.auth?.user ?? null)
-const profile = computed(() => (page.props.value as any)?.profile ?? null)
+const user    = computed(() => page.props.value?.auth?.user ?? null)
+const profile = computed(() => page.props.value?.profile ?? null)
 
-const update = (state:'available'|'busy'|'break'|'off_today') => {
+function update(state) {
   router.post(route('operator.state'), { state }, {
     preserveScroll: true,
     onSuccess: () => router.reload({ only: ['profile'] }),

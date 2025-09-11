@@ -25,3 +25,4 @@ Thumbs.db
 .editorconfig
 .env.example
 docker-compose.yml
+composer.lock

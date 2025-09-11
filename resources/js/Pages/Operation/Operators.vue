@@ -3,8 +3,9 @@ import { computed } from 'vue'
 import { usePage, router } from '@inertiajs/vue3'
 
 const page = usePage()
-// Breeze が共有してくれるユーザ（未ログインなら null）
-const user    = computed(() => (page.props.value as any)?.auth?.user ?? null)
+
+// null セーフに取得
+const me      = computed(() => (page.props.value as any)?.auth?.user ?? null)
 const profile = computed(() => (page.props.value as any)?.profile ?? null)
 
 const update = (state:'available'|'busy'|'break'|'off_today') => {
@@ -19,8 +20,8 @@ const update = (state:'available'|'busy'|'break'|'off_today') => {
   <main class="p-6 space-y-4">
     <header class="flex items-center justify-between">
       <div>
-        <div class="text-xl font-semibold">{{ user?.name ?? '—' }}</div>
-        <div class="text-sm text-slate-500">{{ user?.email ?? '' }}</div>
+        <div class="text-xl font-semibold">{{ me?.name ?? '---' }}</div>
+        <div class="text-sm text-slate-500">{{ me?.email ?? '' }}</div>
       </div>
       <div class="px-3 py-1 rounded-full border text-sm">
         現在: {{ profile?.label ?? '—' }}
@@ -35,7 +36,3 @@ const update = (state:'available'|'busy'|'break'|'off_today') => {
     </div>
   </main>
 </template>
-
-<style scoped>
-.btn { @apply px-4 py-2 rounded-xl border shadow bg-white; }
-</style>

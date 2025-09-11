@@ -45,4 +45,8 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+    public function operatorProfile()
+    {
+        return $this->hasOne(OperatorProfile::class, 'user_id');
+    }
 }
