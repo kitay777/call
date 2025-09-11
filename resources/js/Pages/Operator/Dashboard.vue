@@ -1,21 +1,22 @@
 <script setup>
 import { computed } from 'vue'
 import { usePage, router } from '@inertiajs/vue3'
-// （Ziggy を使っているなら）import route from 'ziggy-js'
 
 const page = usePage()
-const user    = computed(() => page.props.value?.auth?.user ?? null)
-const profile = computed(() => page.props.value?.profile ?? null)
+
+// ✅ .value を外す（props はそのままリアクティブ）
+const user    = computed(() => page.props.auth?.user ?? page.props.me ?? null)
+const profile = computed(() => page.props.profile ?? null)
 
 function update(state) {
-  router.post(route('operator.state'), { state }, {
-    preserveScroll: true,
-    onSuccess: () => router.reload({ only: ['profile'] }),
-  })
+  router.post('/operator/state', { state }, { preserveScroll: true })
 }
 </script>
 
 <template>
+  <!-- 一時デバッグ: props の中身を確認（動作確認できたら消してOK） -->
+  <!-- <pre class="text-xs">{{ JSON.stringify($page.props, null, 2) }}</pre> -->
+
   <main class="p-6 space-y-4">
     <header class="flex items-center justify-between">
       <div>
@@ -35,7 +36,3 @@ function update(state) {
     </div>
   </main>
 </template>
-
-<style scoped>
-.btn { @apply px-4 py-2 rounded-xl border shadow bg-white; }
-</style>

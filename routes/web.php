@@ -9,19 +9,33 @@ use App\Http\Controllers\OperatorController;
 
 use App\Http\Controllers\OperationController;
 
+Route::post('reception/notify-video/{token}', [\App\Http\Controllers\ReceptionController::class, 'notifyVideo'])
+    ->name('reception.notifyVideo');
+Route::post('reception/advance/{token}', [ReceptionController::class, 'advance'])->name('reception.advance');
+Route::get('reception/status/{token}',  [ReceptionController::class, 'status'])->name('reception.status');
+
+
+    // routes/web.php
+Route::middleware(['auth','can:manage-operators'])->group(function () {
+    Route::get('/operation/operators', [OperationController::class,'index'])->name('operation.operators.index');
+    Route::get('/operation/waiting-list', [OperationController::class,'waitingList'])->name('operation.waitingList');
+});
+
+// セッション画面はログイン必須だけ（管理者・オペ両方が見られる想定）
+Route::middleware('auth')->get('/operator/session/{token}', [OperatorController::class, 'session'])
+    ->name('operator.session');
+
 // オペレーター本人用（要ログイン）
 Route::middleware(['auth'])->group(function () {
     Route::get('/operator', [OperatorController::class, 'dashboard'])->name('operator.dashboard');
-    Route::post('/operator/state', [OperatorController::class, 'updateSelfState'])->name('operator.state'); 
+    Route::post('/operator/state', [OperatorController::class, 'updateSelfState'])->name('operator.state');
 });
 
 // 運用管理画面（管理者）
-Route::middleware(['auth'])->group(function () {
-    Route::get('/operation/operators', [OperationController::class, 'index'])
-        ->name('operation.operators.index');
-    Route::post('/operation/operators/{user}/state', [OperationController::class, 'updateState'])
-        ->name('operation.operators.update')->whereNumber('user');
+Route::middleware(['auth', 'can:manage-operators'])->group(function () {
+    Route::post('/operation/operators/{user}/state', [OperationController::class, 'updateState'])->name('operation.operators.update');
 });
+
 
 Route::prefix('reception')->group(function () {
     Route::get('start', [ReceptionController::class, 'start'])->name('reception.start');
@@ -44,12 +58,7 @@ Route::prefix('reception')->group(function () {
 
 
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-        'laravelVersion' => Application::VERSION,
-        'phpVersion' => PHP_VERSION,
-    ]);
+    return redirect()->route('reception.start');
 });
 
 Route::get('/dashboard', function () {

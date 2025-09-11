@@ -18,10 +18,10 @@ class ReceptionController extends Controller
     public function startPost(Request $request)
     {
         $rec = Reception::create([
-            'token' => Str::uuid()->toString(),
-            'status' => 'waiting',
+            'token'  => Str::uuid()->toString(),
+            'status' => 'in_progress', // ← デモ用に直接 in_progress へ
         ]);
-        return redirect()->route('reception.waiting', $rec->token);
+        return redirect()->route('reception.in_progress', $rec->token);
     }
 
     public function waiting(string $token)
@@ -46,22 +46,28 @@ class ReceptionController extends Controller
             'status'       => $rec->status,
             'waitingCount' => $waitingCount,
             'etaMinutes'   => $etaMinutes,
+            'meta'   => $rec->meta ?? [],
         ]);
     }
 
     public function inProgress(string $token)
     {
         $rec = Reception::whereToken($token)->firstOrFail();
-        return Inertia::render('Reception/InProgress', ['reception' => $rec]);
+        return \Inertia\Inertia::render('Reception/InProgress', [
+            'reception' => $rec,
+        ]);
     }
+
 
     public function advance(Request $request, string $token)
     {
-        $rec = Reception::whereToken($token)->firstOrFail();
-        $next = $request->input('next'); // verify/apply/important/sign/done
+        $rec  = Reception::whereToken($token)->firstOrFail();
+        $next = $request->input('next'); // 'verify' など
         $rec->update(['status' => $next]);
-        return response()->json(['ok' => true]);
+        return response()->json(['ok' => true]); // ← このまま
     }
+
+
 
     public function verify(string $token)
     {
@@ -90,5 +96,30 @@ class ReceptionController extends Controller
     public function done(string $token)
     {
         return Inertia::render('Reception/Done');
+    }
+
+    public function notifyVideo(string $token)
+    {
+        $rec = \App\Models\Reception::whereToken($token)->firstOrFail();
+        $meta = $rec->meta ?? [];
+        $meta['has_video'] = true;             // フラグON
+        $rec->meta = $meta;
+        $rec->save();
+
+        return response()->json(['ok' => true]);
+    }
+
+    public function waitingList()
+    {
+        $rows = \App\Models\Reception::query()
+            ->whereIn('status', ['waiting', 'in_progress']) // 必要に応じ変更
+            ->latest()->take(50)->get()
+            ->map(fn($r) => [
+                'id'    => $r->id,
+                'token' => $r->token,
+                'status' => $r->status,
+                'has_video' => (bool) (($r->meta['has_video'] ?? false)),
+            ]);
+        return response()->json($rows);
     }
 }
