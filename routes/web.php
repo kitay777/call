@@ -111,6 +111,7 @@ Route::middleware('auth')->group(function () {
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth', 'can:manage-operators'])->group(function () {
+    Route::get('/admin',    [OperationController::class,'index'])->name('admin.dashboard');
     Route::get('/operation/operators',    [OperationController::class,'index'])->name('operation.operators.index');
     Route::get('/operation/waiting-list', [OperationController::class,'waitingList'])->name('operation.waitingList');
     Route::post('/operation/operators/{user}/state', [OperationController::class, 'updateState'])
