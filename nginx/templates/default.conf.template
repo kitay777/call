@@ -1,0 +1,32 @@
+server {
+    listen 443 ssl http2;
+    server_name ${SERVER_NAME};
+
+    ssl_certificate     /etc/nginx/certs/server.pem;
+    ssl_certificate_key /etc/nginx/certs/server.key;
+
+    # Laravel (APP_SERVICE) をプロキシ
+    location / {
+        proxy_pass http://${APP_SERVICE};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # Socket.IO (WebSocket) をシグナリングへ
+    location /socket.io/ {
+        proxy_pass         http://signaling:3001;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection "Upgrade";
+        proxy_set_header   Host $host;
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+    }
+}
+
+server {
+    listen 80;
+    server_name ${SERVER_NAME};
+    return 301 https://$host$request_uri;
+}

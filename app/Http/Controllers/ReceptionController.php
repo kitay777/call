@@ -6,7 +6,7 @@ use App\Models\Reception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
-
+use Illuminate\Support\Carbon;
 
 class ReceptionController extends Controller
 {
@@ -17,11 +17,23 @@ class ReceptionController extends Controller
 
     public function startPost(Request $request)
     {
-        $rec = Reception::create([
-            'token'  => Str::uuid()->toString(),
-            'status' => 'in_progress', // ← デモ用に直接 in_progress へ
-        ]);
-        return redirect()->route('reception.in_progress', $rec->token);
+        // 受付の新規発行（デモ用に in_progress を直指定するならここで）
+        $rec = new Reception();
+        $rec->token  = Str::uuid()->toString();
+        $rec->status = 'waiting';              // ← 通常は waiting
+        // $rec->status = 'in_progress';      // ← デモで直接進めたいならこちらに切替
+
+        // ★ 6桁の部屋番号（重複しない）
+        $rec->code   = Reception::generateCode();
+
+        $rec->meta   = [];
+        $rec->save();
+
+        // 遷移先は運用に合わせて
+        return redirect()->route(
+            $rec->status === 'in_progress' ? 'reception.in_progress' : 'reception.waiting',
+            $rec->token
+        );
     }
 
     public function waiting(string $token)
@@ -34,40 +46,44 @@ class ReceptionController extends Controller
 
     public function status(string $token)
     {
-        $rec = Reception::whereToken($token)->firstOrFail();
+        $rec = Reception::where('token', $token)->first();
 
-        // 待機人数（自分含む）
-        $waitingCount = Reception::where('status', 'waiting')->count();
-
-        // 推定待ち時間（分）: 1人あたり5分想定（暫定ロジック）
-        $etaMinutes = max(0, $waitingCount * 5);
+        if (!$rec) {
+            return response()->json(['ok' => false, 'message' => 'invalid token'], 404);
+        }
 
         return response()->json([
-            'status'       => $rec->status,
-            'waitingCount' => $waitingCount,
-            'etaMinutes'   => $etaMinutes,
-            'meta'   => $rec->meta ?? [],
+            'ok'     => true,
+            'status' => $rec->status,             // waiting / in_progress / ...
+            'meta'   => $rec->meta ?? (object)[], // ここに room_id が入る
         ]);
     }
 
-    public function inProgress(string $token)
-    {
-        $rec = Reception::whereToken($token)->firstOrFail();
-        return \Inertia\Inertia::render('Reception/InProgress', [
-            'reception' => $rec,
-        ]);
+public function inProgress(string $token)
+{
+    $rec = Reception::whereToken($token)->firstOrFail();
+
+    // ★ room_id を必ず持たせる（code → token の順でフォールバック）
+    $meta = $rec->meta ?? [];
+    if (empty($meta['room_id'])) {
+        $meta['room_id'] = $rec->code ?: $rec->token;
+        $rec->meta = $meta;
+        $rec->save();
     }
 
+    return Inertia::render('Reception/InProgress', [
+        'reception'    => $rec,                          // meta.room_id を含む Model 丸渡し
+        'signalingUrl' => config('app.signaling_url'),   // Vue 側の fallback を潰して明示
+    ]);
+}
 
     public function advance(Request $request, string $token)
     {
         $rec  = Reception::whereToken($token)->firstOrFail();
         $next = $request->input('next'); // 'verify' など
         $rec->update(['status' => $next]);
-        return response()->json(['ok' => true]); // ← このまま
+        return response()->json(['ok' => true]);
     }
-
-
 
     public function verify(string $token)
     {
@@ -88,8 +104,7 @@ class ReceptionController extends Controller
 
     public function signStore(Request $request, string $token)
     {
-        // CanvasデータURLを受け取り、画像保存 → signatures に記録
-        // ここは本実装時に追加
+        // CanvasデータURLを受け取り、画像保存 → signatures に記録（実装は任意）
         return redirect()->route('reception.done', $token);
     }
 
@@ -100,9 +115,9 @@ class ReceptionController extends Controller
 
     public function notifyVideo(string $token)
     {
-        $rec = \App\Models\Reception::whereToken($token)->firstOrFail();
+        $rec = Reception::whereToken($token)->firstOrFail();
         $meta = $rec->meta ?? [];
-        $meta['has_video'] = true;             // フラグON
+        $meta['has_video'] = true;
         $rec->meta = $meta;
         $rec->save();
 
@@ -111,15 +126,54 @@ class ReceptionController extends Controller
 
     public function waitingList()
     {
-        $rows = \App\Models\Reception::query()
-            ->whereIn('status', ['waiting', 'in_progress']) // 必要に応じ変更
+        $rows = Reception::query()
+            ->whereIn('status', ['waiting', 'in_progress'])
             ->latest()->take(50)->get()
             ->map(fn($r) => [
-                'id'    => $r->id,
-                'token' => $r->token,
-                'status' => $r->status,
-                'has_video' => (bool) (($r->meta['has_video'] ?? false)),
+                'id'         => $r->id,
+                'token'      => $r->token,
+                'status'     => $r->status,
+                'code'       => $r->code,
+                'has_video'  => (bool)($r->meta['has_video'] ?? false),
             ]);
         return response()->json($rows);
+    }
+
+    /** 既存: token で Client を開く */
+    public function videoClient(string $token)
+    {
+        return Inertia::render('Talk/Client', [
+            'token'        => $token,
+            'signalingUrl' => config('app.signaling_url'),
+        ]);
+    }
+
+    /** ★ 追加: 部屋番号(code)で Client を開く（/talk/room/{code} 用） */
+    public function videoClientByCode(string $code)
+    {
+        $rec = \App\Models\Reception::where('code', $code)->firstOrFail();
+        return \Inertia\Inertia::render('Talk/Client', [
+            'token'        => $rec->token,
+            'signalingUrl' => config('app.signaling_url'),
+        ]);
+    }
+    
+    public function heartbeat(string $token)
+    {
+        $rec = Reception::where('token', $token)->first();
+        if (!$rec) {
+            return response()->json(['ok' => false], 404);
+        }
+
+        // last_seen_at を meta に入れておく（ISO8601）
+        $meta = $rec->meta ?? [];
+        $meta['last_seen_at'] = now()->toIso8601String();
+        $rec->meta = $meta;
+
+        // updated_at も更新（触るだけ）
+        $rec->touch();
+        $rec->save();
+
+        return response()->json(['ok' => true]);
     }
 }

@@ -9,14 +9,14 @@ const props = defineProps<{
 const waitingCount = ref<number>(0);
 const etaMinutes = ref<number>(0);
 let timer: number | undefined;
+let hbTimer: number | undefined;
 
+/** ステータス/人数/待ち時間を取得 */
 const poll = async () => {
     try {
         const res = await fetch(
             route("reception.status", props.reception.token),
-            {
-                headers: { "X-Requested-With": "XMLHttpRequest" },
-            }
+            { headers: { "X-Requested-With": "XMLHttpRequest" } }
         );
         const json = await res.json();
         waitingCount.value = json.waitingCount ?? 0;
@@ -27,26 +27,37 @@ const poll = async () => {
             router.visit(route("reception.in_progress", props.reception.token));
         }
     } catch (e) {
-        // ネットワーク途切れ時は無視して次のtickで復帰
         console.debug("poll error", e);
+    }
+};
+
+/** 心拍（オペ側に「生きている」ことを知らせる） */
+const heartbeat = async () => {
+    try {
+        await fetch(`/reception/heartbeat/${props.reception.token}`, {
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+    } catch (e) {
+        console.debug("heartbeat error", e);
     }
 };
 
 onMounted(() => {
     poll();
     timer = window.setInterval(poll, 5000);
+    heartbeat();
+    hbTimer = window.setInterval(heartbeat, 5000);
 });
 
 onUnmounted(() => {
     if (timer) clearInterval(timer);
+    if (hbTimer) clearInterval(hbTimer);
 });
 </script>
 
 <template>
     <main class="min-h-screen grid place-items-center bg-slate-50 p-6">
-        <section
-            class="w-full max-w-2xl bg-white rounded-2xl shadow-xl border p-8"
-        >
+        <section class="w-full max-w-2xl bg-white rounded-2xl shadow-xl border p-8">
             <!-- 上部メッセージ -->
             <div class="text-center space-y-3">
                 <p class="text-2xl md:text-3xl font-semibold">

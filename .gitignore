@@ -26,3 +26,4 @@ Thumbs.db
 .env.example
 docker-compose.yml
 composer.lock
+routes/{block:NotLoadItemsPage}.ini

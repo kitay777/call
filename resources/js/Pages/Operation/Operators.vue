@@ -63,13 +63,15 @@ onUnmounted(() => clearInterval(timer));
                     </div>
                     <!-- ● -->
                     <div
-                        :class="[
-                            'w-3 h-3 rounded-full',
-                            r.has_video
-                                ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.25)] animate-pulse'
-                                : 'bg-slate-300',
-                        ]"
-                    ></div>
+                    :class="[
+                        'w-3 h-3 rounded-full',
+                        r.alive
+                        ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.25)] animate-pulse'
+                        : (r.has_video
+                            ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.25)] animate-pulse'
+                            : 'bg-slate-300')
+                    ]"
+                    />
                 </button>
 
                 <div

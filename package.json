@@ -19,5 +19,11 @@
         "tailwindcss": "^3.2.1",
         "vite": "^7.0.4",
         "vue": "^3.5.21"
+    },
+    "dependencies": {
+        "express": "^5.1.0",
+        "kurento-client": "^7.2.0",
+        "socket.io": "^4.8.1",
+        "socket.io-client": "4.8.1"
     }
 }

@@ -45,13 +45,18 @@ class OperationController extends Controller
         $rows = Reception::query()
             ->whereIn('status', ['waiting', 'in_progress'])
             ->latest()->take(50)->get()
-            ->map(fn($r) => [
-                'id'        => $r->id,
-                'token'     => $r->token,
-                'status'    => $r->status,
-                'has_video' => (bool)($r->meta['has_video'] ?? false),
-            ]);
+            ->map(function($r) {
+                $isAlive = $r->updated_at->gt(now()->subSeconds(10)); // 直近10秒以内なら生きてると判定
+                return [
+                    'id'        => $r->id,
+                    'token'     => $r->token,
+                    'status'    => $r->status,
+                    'has_video' => (bool)($r->meta['has_video'] ?? false),
+                    'alive'     => $isAlive,
+                ];
+            });
 
         return response()->json($rows);
     }
+
 }
