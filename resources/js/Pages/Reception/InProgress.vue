@@ -31,29 +31,32 @@ const SIGNALING_URL =
 
 // ===== Local Camera =====
 async function startCamera() {
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
-    console.log("[caller] local tracks", localStream.getTracks().map(t => t.kind));
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+        });
+        console.log(
+            "[caller] local tracks",
+            localStream.getTracks().map((t) => t.kind)
+        );
 
-    // Vue の ref を使ってプレビュー表示
-    if (localVideoEl.value) {
-      localVideoEl.value.srcObject = localStream;
-      localVideoEl.value.muted = true; // 自分の音をループさせない
-      localVideoEl.value.playsInline = true;
-      await localVideoEl.value.play().catch(err => console.warn("[caller] play() error", err));
+        // Vue の ref を使ってプレビュー表示
+        if (localVideoEl.value) {
+            localVideoEl.value.srcObject = localStream;
+            localVideoEl.value.muted = true; // 自分の音をループさせない
+            localVideoEl.value.playsInline = true;
+            await localVideoEl.value
+                .play()
+                .catch((err) => console.warn("[caller] play() error", err));
+        }
+
+        hasLocal.value = true; // PIP 表示を有効化
+    } catch (err) {
+        console.error("[caller] getUserMedia failed", err.name, err.message);
+        alert("カメラ・マイクの使用を許可してください。");
     }
-
-    hasLocal.value = true; // PIP 表示を有効化
-  } catch (err) {
-    console.error("[caller] getUserMedia failed", err.name, err.message);
-    alert("カメラ・マイクの使用を許可してください。");
-  }
 }
-
-
 
 // ===== 状態ポーリング =====
 async function pollStatus() {
@@ -92,30 +95,29 @@ async function join() {
     console.log("[caller] RTCPeerConnection created");
 
     // === Remote映像の受信 ===
-pc.ontrack = (event) => {
-  const stream = event.streams?.[0];
-  if (!stream || !remoteVideoEl.value) return;
+    pc.ontrack = (event) => {
+        const stream = event.streams?.[0];
+        if (!stream || !remoteVideoEl.value) return;
 
-  // すでに stream が設定済みなら再設定しない
-  if (remoteVideoEl.value.srcObject !== stream) {
-    console.log("[caller] ontrack new stream");
-    remoteVideoEl.value.srcObject = stream;
-  } else {
-    console.log("[caller] ontrack duplicate, ignored");
-  }
+        // すでに stream が設定済みなら再設定しない
+        if (remoteVideoEl.value.srcObject !== stream) {
+            console.log("[caller] ontrack new stream");
+            remoteVideoEl.value.srcObject = stream;
+        } else {
+            console.log("[caller] ontrack duplicate, ignored");
+        }
 
-  // 少し遅延を入れて再生
-  setTimeout(() => {
-    remoteVideoEl.value
-      .play()
-      .then(() => {
-        hasRemote.value = true;
-        console.log("[caller] video playing ✅");
-      })
-      .catch((err) => console.warn("[caller] play() blocked", err));
-  }, 300);
-};
-
+        // 少し遅延を入れて再生
+        setTimeout(() => {
+            remoteVideoEl.value
+                .play()
+                .then(() => {
+                    hasRemote.value = true;
+                    console.log("[caller] video playing ✅");
+                })
+                .catch((err) => console.warn("[caller] play() blocked", err));
+        }, 300);
+    };
 
     // === Local映像の送信 ===
     if (localStream) {
@@ -158,8 +160,14 @@ pc.ontrack = (event) => {
     });
 
     socket.on("sdp-answer", async ({ sdp }) => {
-        console.log("[caller] got answer", sdp?.slice?.(0, 50));
-        await pc.setRemoteDescription({ type: "answer", sdp });
+        try {
+            await pc.setRemoteDescription({ type: "answer", sdp });
+            connected.value = true; // ✅ ここを追加
+            connecting.value = false;
+            console.log("[callee] got answer and marked connected");
+        } catch (e) {
+            console.error("[callee sdp-answer]", e);
+        }
     });
 
     socket.on("ice-candidate", ({ candidate }) => {

@@ -192,6 +192,18 @@ pc.ontrack = (e) => {
                 console.error("[callee] offer failed", e);
             }
         };
+        // === 自分の offer に対する answer を受信 ===
+socket.on("sdp-answer", async ({ sdp }) => {
+  try {
+    await pc.setRemoteDescription({ type: "answer", sdp });
+    connected.value = true;     // ✅ KurentoからAnswerを受け取ったら接続完了
+    connecting.value = false;
+    console.log("[callee] got answer → connection established ✅");
+  } catch (e) {
+    console.error("[callee sdp-answer error]", e);
+  }
+});
+
 
 // === join-room の後 ===
 socket.once("peer-joined", async ({ roomId }) => {
@@ -266,23 +278,25 @@ onBeforeUnmount(() => {
 });
 function sendPhase(phase) {
   if (!socket || !socket.connected) {
-    console.warn("[callee] Socket not connected yet");
+    console.warn("[callee] socket not ready");
     return;
   }
   if (!roomId) {
-    console.warn("[callee] No roomId yet");
+    console.warn("[callee] no roomId");
     return;
   }
 
-  // 通話が確立していない（KurentoでAnswer交換前）は送らない
+  // ✅ connected が false のときは再試行する
   if (!connected.value) {
-    console.warn("[callee] Not connected to peer yet, skip phase:", phase);
+    console.warn("[callee] not connected yet, retrying...");
+    setTimeout(() => sendPhase(phase), 1000);
     return;
   }
 
   socket.emit("phase-change", { roomId, phase });
   console.log("[callee] sent phase:", phase);
 }
+
 
 
 </script>

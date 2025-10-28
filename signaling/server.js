@@ -154,53 +154,37 @@ async function ensureRoom(roomId) {
 
 
 
-function connectBothWays(room) {
-  const { caller, callee } = room
+async function connectBothWays(room) {
+  const { caller, callee } = room;
   if (!caller?.webrtc || !callee?.webrtc) {
-    log(`[sig] connect skipped — missing endpoint(s)`)
-    return
+    log(`[sig] connect skipped — missing endpoint(s)`);
+    return;
   }
 
   try {
-    // Kurento の MediaPipeline は参照ではなく内部 ID 文字列を比較すべき
-    const pipeline1 = caller.webrtc.mediaPipeline?.id || caller.webrtc.mediaPipeline
-    const pipeline2 = callee.webrtc.mediaPipeline?.id || callee.webrtc.mediaPipeline
+    // 双方向connectの順序を保証（Kurentoの非同期競合防止）
+    await new Promise((resolve, reject) => {
+      caller.webrtc.connect(callee.webrtc, err => {
+        if (err) return reject(err);
+        log(`[sig] connected caller -> callee`);
+        resolve();
+      });
+    });
 
-    if (pipeline1 && pipeline2 && pipeline1 !== pipeline2) {
-      log(`[sig] ⚠️ different pipeline IDs detected: ${pipeline1} vs ${pipeline2}`)
-      // 同じパイプラインでないなら、片方の endpoint をもう一方の pipeline に作り直す
-      const shared = room.pipeline
-      if (shared) {
-        log(`[sig] rebuilding both endpoints inside shared pipeline ${shared.id}`)
-        // 再生成
-        const rebuild = async () => {
-          const client = await getKurentoClient()
-          // 古い endpoint を解放
-          try { caller.webrtc.release() } catch {}
-          try { callee.webrtc.release() } catch {}
+    await new Promise((resolve, reject) => {
+      callee.webrtc.connect(caller.webrtc, err => {
+        if (err) return reject(err);
+        log(`[sig] connected callee -> caller`);
+        resolve();
+      });
+    });
 
-          caller.webrtc = await createEndpoint(shared)
-          callee.webrtc = await createEndpoint(shared)
-          applyIceServers(caller.webrtc)
-          applyIceServers(callee.webrtc)
-          attachEndpointHandlers(caller.webrtc, { id: caller.socketId })
-          attachEndpointHandlers(callee.webrtc, { id: callee.socketId })
-          log(`[sig] ✅ endpoints rebuilt under shared pipeline ${shared.id}`)
-          caller.webrtc.connect(callee.webrtc)
-          callee.webrtc.connect(caller.webrtc)
-        }
-        rebuild().catch(e => console.error('[sig rebuild error]', e))
-        return
-      }
-    }
-
-    caller.webrtc.connect(callee.webrtc, e => e && console.error('[connect caller->callee]', e))
-    callee.webrtc.connect(caller.webrtc, e => e && console.error('[connect callee->caller]', e))
-    log(`[sig] ✅ endpoints connected for room ${room.roomId || '(unknown)'}`)
+    log(`[sig] ✅ endpoints fully connected for room ${room.roomId || '(unknown)'}`);
   } catch (e) {
-    console.error('[connect exception]', e)
+    console.error('[connectBothWays error]', e);
   }
 }
+
 
 
 // ✅ 安全な破棄（両者離脱後のみ削除）
