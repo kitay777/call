@@ -6,7 +6,7 @@ const page = usePage();
 const ops = computed(() => page.props.operators ?? []);
 const counts = computed(() => page.props.counts ?? {});
 
-// 既存の state ボード用（そのまま）
+// 既存ボード
 const buckets = computed(() => ({
     available: ops.value.filter((o) => o.state === "available"),
     busy: ops.value.filter((o) => o.state === "busy"),
@@ -14,19 +14,28 @@ const buckets = computed(() => ({
     off_today: ops.value.filter((o) => o.state === "off_today"),
 }));
 
-// ★ 追加：待機中受付（●表示用）
+// 待機中受付リスト
 const waiting = ref([]);
 let timer;
+
 async function pollWaiting() {
-    const res = await fetch("/operation/waiting-list", {
-        headers: { "X-Requested-With": "XMLHttpRequest" },
-    });
-    waiting.value = await res.json();
+    try {
+        const res = await fetch("/operation/waiting-list", {
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+        if (res.ok) waiting.value = await res.json();
+    } catch (e) {
+        console.error("[pollWaiting error]", e);
+    }
 }
+
 function openSession(token) {
     router.visit(`/operator/session/${token}`);
 }
 
+function goBack() {
+    router.visit("/dashboard");
+}
 
 onMounted(() => {
     pollWaiting();
@@ -37,6 +46,19 @@ onUnmounted(() => clearInterval(timer));
 
 <template>
     <main class="p-6 space-y-6">
+        <!-- 上部に戻るボタン -->
+        <div class="flex items-center justify-between mb-4">
+            <h1 class="text-lg font-semibold text-slate-800">
+                オペレーター管理
+            </h1>
+            <button
+                @click="goBack"
+                class="px-4 py-2 text-sm rounded-lg border bg-white hover:bg-slate-50"
+            >
+                ← 戻る
+            </button>
+        </div>
+
         <!-- 追加：待機中の受付（丸インジケータ） -->
         <section>
             <div class="flex items-center justify-between mb-2">
@@ -63,14 +85,14 @@ onUnmounted(() => clearInterval(timer));
                     </div>
                     <!-- ● -->
                     <div
-                    :class="[
-                        'w-3 h-3 rounded-full',
-                        r.alive
-                        ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.25)] animate-pulse'
-                        : (r.has_video
-                            ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.25)] animate-pulse'
-                            : 'bg-slate-300')
-                    ]"
+                        :class="[
+                            'w-3 h-3 rounded-full',
+                            r.alive
+                                ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.25)] animate-pulse'
+                                : (r.has_video
+                                    ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.25)] animate-pulse'
+                                    : 'bg-slate-300')
+                        ]"
                     />
                 </button>
 
@@ -83,7 +105,13 @@ onUnmounted(() => clearInterval(timer));
             </div>
         </section>
 
-        <!-- ↓ここから下は、前に作った4つの状態ボード（そのまま） -->
-        <!-- 待機中 / 接客中 / 休憩中 / 本日休業 の各セクション ... -->
+        <!-- ↓ 以下は既存の状態ボード -->
+        <!-- ... -->
     </main>
 </template>
+
+<style scoped>
+.aspect-video {
+    aspect-ratio: 16 / 9;
+}
+</style>

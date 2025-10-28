@@ -33,6 +33,23 @@ const update = (state:'available'|'busy'|'break'|'off_today') => {
       <button class="btn" @click="update('break')">休憩中</button>
       <button class="btn" @click="update('off_today')">本日休業</button>
     </div>
+    <div class="flex gap-2 mt-4">
+      <!-- 🔗 追加したリンクボタン -->
+      <Link
+        href="/operation/operators"
+        class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+      >
+        オペレーター一覧へ
+      </Link>
+
+      <button
+        class="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700"
+        @click="router.post('/logout')"
+      >
+        ログアウト
+      </button>
+    </div>
+
   </main>
 </template>
 
