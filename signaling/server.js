@@ -1,32 +1,44 @@
-// Kurento 一対一用シグナリング（Socket.IO）
-// - IceCandidateFound はブラウザへプレーンな RTCIceCandidateInit を送る（超重要）
-// - ブラウザ→サーバの ICE は Kurento complexType に変換して add
-// - join-room は ack + peer-joined 通知でオーダーを安定化
-// - sdp-offer を受けて Kurento で Answer を返す（caller/callee 両対応）
-// - 両者の WebRtcEndpoint を双方向 connect
-// - stop / disconnect で相手へ通知しつつ部屋を解放
+// ==========================================================
+// Kurento 一対一用 Signaling サーバ (Socket.IO + Express)
+// ==========================================================
+//
+// ✅ 改善ポイント
+//  - caller / callee が同じ MediaPipeline を確実に共有
+//  - disconnect 時に pipeline を即破棄しない（両者離脱後に破棄）
+//  - callee/caller の順序差異にも強い
+//  - STUN/TURN 設定・ICE 処理完備
+//  - phase-change イベントの双方向伝播対応
+//  - ログの粒度を最適化
+//
 
-const express = require('express')
-const http = require('http')
-const { Server } = require('socket.io')
-const kurento = require('kurento-client')
+const fs = require('fs');
+const express = require('express');
+const https = require('https');
+const { Server } = require('socket.io');
+const kurento = require('kurento-client');
+const SSL_KEY = process.env.SSL_KEY || '/etc/nginx/certs/server.key';
+const SSL_CERT = process.env.SSL_CERT || '/etc/nginx/certs/server.pem';
 
-// ===== 環境変数 =====
+// ===== 環境設定 =====
 const APP_ORIGIN = process.env.APP_ORIGIN || 'https://dev.call.navi.jpn.com'
 const KURENTO_URI = process.env.KURENTO_URI || 'ws://neoria.fun:8888/kurento'
 const PORT = Number(process.env.PORT || 3001)
 
-// STUN/TURN
 const STUN_ADDR = process.env.STUN_ADDRESS || 'stun.l.google.com'
 const STUN_PORT = Number(process.env.STUN_PORT || 19302)
-// 例: 'kitayama:celica77@turn.picton.jp:3478?transport=udp'
-const TURN_URL = process.env.TURN_URL || ''
+const TURN_URL = process.env.TURN_URL || 'kitayama:celica77@turn.picton.jp:3478?transport=udp'
 const DISABLE_STUN = /^true$/i.test(process.env.DISABLE_STUN || '')
 const DISABLE_TURN = /^true$/i.test(process.env.DISABLE_TURN || '')
 
-// ===== 基本セットアップ =====
-const app = express()
-const server = http.createServer(app)
+// ===== サーバ初期化 =====
+const app = express();
+const options = {
+  key: fs.readFileSync(SSL_KEY),
+  cert: fs.readFileSync(SSL_CERT),
+};
+
+// ===== HTTPSサーバー =====
+const server = https.createServer(options, app);
 const io = new Server(server, {
   cors: {
     origin: [
@@ -36,17 +48,19 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true
   }
-})
+});
 
 app.get('/health', (_, res) => res.json({ ok: true }))
 
 let kurentoClient = null
-// roomId -> { pipeline, caller:{ webrtc, socketId }, callee:{ webrtc, socketId } }
+// roomId -> { pipeline, caller:{webrtc,socketId}, callee:{webrtc,socketId} }
 const rooms = new Map()
-
 const log = (...a) => console.log('[sig]', ...a)
 
-// ===== Kurento ユーティリティ =====
+// ==========================================================
+// Kurento Utility
+// ==========================================================
+
 async function getKurentoClient() {
   if (kurentoClient) return kurentoClient
   return new Promise((resolve, reject) => {
@@ -65,131 +79,227 @@ function createEndpoint(pipeline) {
 }
 
 function toKurentoCandidate(candidate) {
-  if (candidate && candidate.__module && candidate.__type) return candidate
+  if (!candidate) return null
+  if (candidate.__module && candidate.__type) return candidate
   return kurento.getComplexType('IceCandidate')(candidate)
 }
 
 function applyIceServers(endpoint) {
   if (!DISABLE_STUN && STUN_ADDR && STUN_PORT) {
-    endpoint.setStunServerAddress(STUN_ADDR, (e) => e && console.error('setStun addr', e))
-    endpoint.setStunServerPort(STUN_PORT, (e) => e && console.error('setStun port', e))
+    endpoint.setStunServerAddress(STUN_ADDR, e => e && console.error('setStun addr', e))
+    endpoint.setStunServerPort(STUN_PORT, e => e && console.error('setStun port', e))
   }
   if (!DISABLE_TURN && TURN_URL) {
-    endpoint.setTurnUrl(TURN_URL, (e) => e && console.error('setTurnUrl', e))
+    endpoint.setTurnUrl(TURN_URL, e => e && console.error('setTurnUrl', e))
   }
 }
 
 function attachEndpointHandlers(endpoint, socket) {
-  endpoint.on('IceCandidateFound', (ev) => {
-    try {
-      io.to(socket.id).emit('ice-candidate', { candidate: ev.candidate })
-    } catch (e) {
-      console.error('[IceCandidateFound emit error]', e)
-    }
+  endpoint.on('IceCandidateFound', ev => {
+    io.to(socket.id).emit('ice-candidate', { candidate: ev.candidate })
   })
-  endpoint.on('MediaStateChanged', (ev) => log('MediaStateChanged', ev.newState))
-  endpoint.on('ConnectionStateChanged', (ev) => log('ConnectionStateChanged', ev.newState))
+  endpoint.on('MediaStateChanged', ev => log('MediaStateChanged', ev.newState))
+  endpoint.on('ConnectionStateChanged', ev => log('ConnectionStateChanged', ev.newState))
 }
+
+// グローバル変数
+const pipelineLocks = new Map();
 
 async function ensureRoom(roomId) {
-  const client = await getKurentoClient()
-  let room = rooms.get(roomId)
-  if (!room) {
-    room = { pipeline: null, caller: {}, callee: {} }
-    rooms.set(roomId, room)
+  const client = await getKurentoClient();
+
+  // === 既存の pipeline があればそれを使う ===
+  const existing = rooms.get(roomId);
+  if (existing?.pipeline) return existing;
+
+  // === rooms に仮エントリを最初に確保（重要）===
+  if (!rooms.has(roomId)) {
+    rooms.set(roomId, { pipeline: null, caller: {}, callee: {} });
   }
-  if (!room.pipeline) {
+  const room = rooms.get(roomId);
+
+  // === 他が同時に作成中なら待機 ===
+  if (pipelineLocks.has(roomId)) {
+    log(`[sig] waiting for existing pipeline lock for ${roomId}`);
+    await pipelineLocks.get(roomId);
+    return rooms.get(roomId);
+  }
+
+  // === 自分が pipeline 作成担当 ===
+  let resolver;
+  const lockPromise = new Promise((res) => (resolver = res));
+  pipelineLocks.set(roomId, lockPromise);
+
+  try {
+    log(`[sig] 🏗️ creating pipeline for room ${roomId}`);
     room.pipeline = await new Promise((res, rej) => {
-      client.create('MediaPipeline', (e, p) => (e ? rej(e) : res(p)))
-    })
+      client.create('MediaPipeline', (err, p) => (err ? rej(err) : res(p)));
+    });
+    log(`[sig] ✅ pipeline created (${room.pipeline.id}) for ${roomId}`);
+  } catch (err) {
+    console.error(`[sig] ❌ pipeline creation failed for ${roomId}`, err);
+    rooms.delete(roomId);
+    throw err;
+  } finally {
+    resolver(); // ロック解除
+    pipelineLocks.delete(roomId);
   }
-  return room
+
+  return room;
 }
+
+
+
+
+
+
 
 function connectBothWays(room) {
-  if (room.caller?.webrtc && room.callee?.webrtc) {
-    room.caller.webrtc.connect(room.callee.webrtc, (e) => e && console.error('[connect caller->callee]', e))
-    room.callee.webrtc.connect(room.caller.webrtc, (e) => e && console.error('[connect callee->caller]', e))
+  const { caller, callee } = room
+  if (!caller?.webrtc || !callee?.webrtc) {
+    log(`[sig] connect skipped — missing endpoint(s)`)
+    return
+  }
+
+  try {
+    // Kurento の MediaPipeline は参照ではなく内部 ID 文字列を比較すべき
+    const pipeline1 = caller.webrtc.mediaPipeline?.id || caller.webrtc.mediaPipeline
+    const pipeline2 = callee.webrtc.mediaPipeline?.id || callee.webrtc.mediaPipeline
+
+    if (pipeline1 && pipeline2 && pipeline1 !== pipeline2) {
+      log(`[sig] ⚠️ different pipeline IDs detected: ${pipeline1} vs ${pipeline2}`)
+      // 同じパイプラインでないなら、片方の endpoint をもう一方の pipeline に作り直す
+      const shared = room.pipeline
+      if (shared) {
+        log(`[sig] rebuilding both endpoints inside shared pipeline ${shared.id}`)
+        // 再生成
+        const rebuild = async () => {
+          const client = await getKurentoClient()
+          // 古い endpoint を解放
+          try { caller.webrtc.release() } catch {}
+          try { callee.webrtc.release() } catch {}
+
+          caller.webrtc = await createEndpoint(shared)
+          callee.webrtc = await createEndpoint(shared)
+          applyIceServers(caller.webrtc)
+          applyIceServers(callee.webrtc)
+          attachEndpointHandlers(caller.webrtc, { id: caller.socketId })
+          attachEndpointHandlers(callee.webrtc, { id: callee.socketId })
+          log(`[sig] ✅ endpoints rebuilt under shared pipeline ${shared.id}`)
+          caller.webrtc.connect(callee.webrtc)
+          callee.webrtc.connect(caller.webrtc)
+        }
+        rebuild().catch(e => console.error('[sig rebuild error]', e))
+        return
+      }
+    }
+
+    caller.webrtc.connect(callee.webrtc, e => e && console.error('[connect caller->callee]', e))
+    callee.webrtc.connect(caller.webrtc, e => e && console.error('[connect callee->caller]', e))
+    log(`[sig] ✅ endpoints connected for room ${room.roomId || '(unknown)'}`)
+  } catch (e) {
+    console.error('[connect exception]', e)
   }
 }
 
+
+// ✅ 安全な破棄（両者離脱後のみ削除）
 function releaseRoom(roomId) {
   const room = rooms.get(roomId)
   if (!room) return
-  log('releaseRoom', roomId)
 
-  try { room.caller?.webrtc && room.caller.webrtc.release() } catch (e) { console.error(e) }
-  try { room.callee?.webrtc && room.callee.webrtc.release() } catch (e) { console.error(e) }
-  try { room.pipeline && room.pipeline.release() } catch (e) { console.error(e) }
+  const hasCaller = !!room.caller?.socketId
+  const hasCallee = !!room.callee?.socketId
 
-  try { room.caller?.socketId && io.to(room.caller.socketId).emit('stop', { roomId }) } catch (e) { console.error(e) }
-  try { room.callee?.socketId && io.to(room.callee.socketId).emit('stop', { roomId }) } catch (e) { console.error(e) }
+  if (hasCaller || hasCallee) {
+    log(`[sig] skip releaseRoom ${roomId} — someone still connected`)
+    return
+  }
 
+  log('[sig] releaseRoom', roomId)
+  try { room.caller?.webrtc?.release() } catch {}
+  try { room.callee?.webrtc?.release() } catch {}
+  try { room.pipeline?.release() } catch {}
   rooms.delete(roomId)
 }
 
-// ===== Socket.IO ハンドラ =====
-io.on('connection', (socket) => {
+// ==========================================================
+// Socket.IO
+// ==========================================================
+
+io.on('connection', socket => {
   log('connected', socket.id)
 
-  // 入室
+  // === Phase Change ===
+  socket.on('phase-change', ({ roomId, phase }) => {
+    log('[sig phase-change]', roomId, phase)
+    socket.to(roomId).emit('phase-change', { phase })
+  })
+
+  // === Join Room ===
   socket.on('join-room', ({ roomId, role }, ack) => {
     try {
-      if (!roomId)
-        return typeof ack === 'function' && ack({ ok: false, error: 'no roomId' })
+      if (!roomId) return ack?.({ ok: false, error: 'no roomId' })
 
       socket.join(roomId)
       socket.to(roomId).emit('peer-joined', { roomId, role })
-      log('peer-joined emitted', roomId, role)
+      log('[sig] peer-joined emitted', roomId, role)
 
-      // ★ すでに相手が入っている場合、自分にも通知（順序ずれ対策）
       const room = io.sockets.adapter.rooms.get(roomId)
       if (room && room.size > 1) {
         socket.emit('peer-joined', { roomId, role: role === 'caller' ? 'callee' : 'caller' })
-        log('peer-joined echo to self', roomId, role)
+        log('[sig] peer-joined echo to self', roomId)
       }
 
-      if (typeof ack === 'function') ack({ ok: true })
+      ack?.({ ok: true })
     } catch (e) {
-      if (typeof ack === 'function') ack({ ok: false, error: String(e) })
+      ack?.({ ok: false, error: String(e) })
     }
   })
 
-  // SDP Offer
-  socket.on('sdp-offer', async ({ roomId, role, sdp }) => {
-    try {
-      if (!roomId || !sdp || !/^(caller|callee)$/.test(role)) throw new Error('Invalid offer payload')
-      const room = await ensureRoom(roomId)
-      const side = role === 'caller' ? 'caller' : 'callee'
+  // === SDP Offer ===
+socket.on('sdp-offer', async ({ roomId, role, sdp }) => {
+  try {
+    if (!roomId || !sdp || !/^(caller|callee)$/.test(role))
+      throw new Error('Invalid offer payload');
 
-      if (!room[side].webrtc) {
-        room[side].webrtc = await createEndpoint(room.pipeline)
-        applyIceServers(room[side].webrtc)
-        attachEndpointHandlers(room[side].webrtc, socket)
-      }
+    const room = await ensureRoom(roomId);
+    const side = role === 'caller' ? 'caller' : 'callee';
 
-      const answer = await new Promise((res, rej) => {
-        room[side].webrtc.processOffer(sdp, (e, a) => (e ? rej(e) : res(a)))
-      })
-
-      room[side].webrtc.gatherCandidates(() => {})
-      connectBothWays(room)
-      room[side].socketId = socket.id
-
-      io.to(socket.id).emit('sdp-answer', { sdp: answer, roomId })
-      log('offer handled', { roomId, role, socket: socket.id })
-    } catch (e) {
-      console.error('sdp-offer error', e)
-      io.to(socket.id).emit('stop', { roomId })
+    if (!room[side].webrtc) {
+      room[side].webrtc = await createEndpoint(room.pipeline);
+      applyIceServers(room[side].webrtc);
+      attachEndpointHandlers(room[side].webrtc, socket);
     }
-  })
 
-  // ICE Candidate
+    const answer = await new Promise((res, rej) =>
+      room[side].webrtc.processOffer(sdp, (e, a) => (e ? rej(e) : res(a)))
+    );
+
+    room[side].webrtc.gatherCandidates(() => {});
+    room[side].socketId = socket.id;
+
+    io.to(socket.id).emit('sdp-answer', { sdp: answer, roomId });
+    log('[sig] offer handled', { roomId, role, socket: socket.id });
+
+    // 両者揃ったら connect
+    if (room.caller?.webrtc && room.callee?.webrtc) {
+      log(`[sig] both endpoints ready for room ${roomId}, connecting...`);
+      connectBothWays(room);
+    }
+
+  } catch (e) {
+    console.error('[sdp-offer error]', e);
+    io.to(socket.id).emit('stop', { roomId });
+  }
+});
+
+
+  // === ICE Candidate ===
   socket.on('ice-candidate', ({ roomId, candidate }) => {
     try {
       const room = rooms.get(roomId)
       if (!room || !candidate) return
-
       for (const side of ['caller', 'callee']) {
         if (room[side]?.socketId === socket.id && room[side]?.webrtc) {
           const cand = toKurentoCandidate(candidate)
@@ -202,30 +312,47 @@ io.on('connection', (socket) => {
     }
   })
 
-  // stop（片側終了）
+  // === stop ===
   socket.on('stop', ({ roomId }) => {
-    if (roomId) {
-      socket.to(roomId).emit('peer-left', { roomId })
-      log('peer-left emitted', roomId)
-      releaseRoom(roomId)
-    }
+    if (!roomId) return
+    socket.to(roomId).emit('peer-left', { roomId })
+    log('peer-left emitted', roomId)
+
+    const room = rooms.get(roomId)
+    if (!room) return
+
+    if (room.caller?.socketId === socket.id) room.caller.socketId = null
+    if (room.callee?.socketId === socket.id) room.callee.socketId = null
+
+    releaseRoom(roomId)
   })
 
-  // 切断
+  // === Disconnect ===
   socket.on('disconnect', () => {
     log('disconnect', socket.id)
     for (const [rid, room] of rooms.entries()) {
-      if (room.caller?.socketId === socket.id || room.callee?.socketId === socket.id) {
-        log('releasing room due to disconnect', rid)
-        releaseRoom(rid)
+      let changed = false
+      if (room.caller?.socketId === socket.id) {
+        room.caller.socketId = null
+        changed = true
       }
+      if (room.callee?.socketId === socket.id) {
+        room.callee.socketId = null
+        changed = true
+      }
+      if (changed) releaseRoom(rid)
     }
   })
+
+  socket.onAny((event, ...args) => log('[sig:onAny]', event, args.length))
 })
 
-// ===== 起動 =====
-process.on('uncaughtException', (err) => console.error('[uncaughtException]', err))
-process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason))
+// ==========================================================
+// 起動
+// ==========================================================
+
+process.on('uncaughtException', err => console.error('[uncaughtException]', err))
+process.on('unhandledRejection', reason => console.error('[unhandledRejection]', reason))
 
 server.listen(PORT, () => {
   console.log(`signaling :${PORT} origin=${APP_ORIGIN} -> KMS ${KURENTO_URI}`)
