@@ -109,6 +109,14 @@ async function join() {
   socket = io(SIGNALING_URL, { transports: ["websocket"] });
   socket.on("connect_error", (e) => console.error("[caller socket]", e));
 
+  // ✅ ここを追加
+  socket.on("stop", () => {
+    console.log("[caller] stop received from operator");
+    leaveAll();
+    alert("通話が終了しました。ありがとうございました。");
+    window.location.href = "/reception/start"; // ✅ 受付画面に戻る
+  });
+
   // ===== フェーズ受信 =====
   socket.on("phase-change", async ({ phase }) => {
     console.log("[caller] phase-change:", phase);
@@ -120,7 +128,7 @@ async function join() {
       showDocument.value = false;
       showSignPad.value = true;
       await nextTick();
-      initSignaturePad();
+      setTimeout(() => initSignaturePad(), 150);
     }
   });
 
@@ -144,6 +152,7 @@ async function join() {
     candidate && pc.addIceCandidate(candidate).catch(console.error)
   );
 }
+
 
 // ===== チェック処理 =====
 function checkItem(i) {

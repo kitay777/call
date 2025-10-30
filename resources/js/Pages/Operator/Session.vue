@@ -37,6 +37,7 @@ function heartbeat() {
     }).catch(() => {});
 }
 
+
 function cleanup() {
     connected.value = false;
     connecting.value = false;
@@ -280,11 +281,20 @@ async function joinCall() {
 }
 
 function leaveCall() {
-    try {
-        socket && roomId && socket.emit("stop", { roomId });
-    } catch {}
-    cleanup();
+  try {
+    // 相手にも stop 通知を送る
+    socket && roomId && socket.emit("stop", { roomId });
+  } catch (e) {
+    console.warn("stop emit failed", e);
+  }
+
+  // 安全にクリーンアップ
+  cleanup();
+
+  // ✅ ページ遷移：オペレータ一覧へ戻す
+  window.location.href = "/operation/operators";
 }
+
 
 onMounted(() => {
     heartbeat();
