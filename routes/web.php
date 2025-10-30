@@ -13,6 +13,9 @@ use App\Http\Controllers\OperationController;
 |--------------------------------------------------------------------------
 | ※ ルート重複なし。token/code は英数ハイフンのみ許可。
 */
+Route::post('/reception/ack-important/{token}', [ReceptionController::class, 'ackImportant']);
+
+
 Route::prefix('reception')->group(function () {
     Route::get('heartbeat/{token}', [ReceptionController::class, 'heartbeat'])
         ->where('token', '[A-Za-z0-9\-]+')

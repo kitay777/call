@@ -59,23 +59,23 @@ class ReceptionController extends Controller
         ]);
     }
 
-public function inProgress(string $token)
-{
-    $rec = Reception::whereToken($token)->firstOrFail();
+    public function inProgress(string $token)
+    {
+        $rec = Reception::whereToken($token)->firstOrFail();
 
-    // ★ room_id を必ず持たせる（code → token の順でフォールバック）
-    $meta = $rec->meta ?? [];
-    if (empty($meta['room_id'])) {
-        $meta['room_id'] = $rec->code ?: $rec->token;
-        $rec->meta = $meta;
-        $rec->save();
+        // ★ room_id を必ず持たせる（code → token の順でフォールバック）
+        $meta = $rec->meta ?? [];
+        if (empty($meta['room_id'])) {
+            $meta['room_id'] = $rec->code ?: $rec->token;
+            $rec->meta = $meta;
+            $rec->save();
+        }
+
+        return Inertia::render('Reception/InProgress', [
+            'reception'    => $rec,                          // meta.room_id を含む Model 丸渡し
+            'signalingUrl' => config('app.signaling_url'),   // Vue 側の fallback を潰して明示
+        ]);
     }
-
-    return Inertia::render('Reception/InProgress', [
-        'reception'    => $rec,                          // meta.room_id を含む Model 丸渡し
-        'signalingUrl' => config('app.signaling_url'),   // Vue 側の fallback を潰して明示
-    ]);
-}
 
     public function advance(Request $request, string $token)
     {
@@ -102,11 +102,33 @@ public function inProgress(string $token)
         return Inertia::render('Reception/Sign', ['token' => $token]);
     }
 
+    // use Illuminate\Support\Facades\Http;
+
     public function signStore(Request $request, string $token)
     {
-        // CanvasデータURLを受け取り、画像保存 → signatures に記録（実装は任意）
-        return redirect()->route('reception.done', $token);
+        $rec = Reception::whereToken($token)->firstOrFail();
+        $img = $request->input('image');
+        if ($img) {
+            $data = explode(',', $img);
+            $decoded = base64_decode($data[1]);
+            $path = "signatures/{$rec->token}.png";
+            \Storage::disk('public')->put($path, $decoded);
+            $rec->meta = array_merge($rec->meta ?? [], ['signature_path' => $path]);
+            $rec->save();
+
+            // 🚀 Signalingサーバーへ通知（非同期OK）
+            try {
+                Http::post(env('SIGNALING_API_URL', 'https://dev.call.navi.jpn.com/api/signature-done'), [
+                    'roomId' => $rec->meta['room_id'] ?? $rec->code,
+                ]);
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to notify signaling server: ' . $e->getMessage());
+            }
+        }
+
+        return response()->json(['ok' => true, 'path' => $path]);
     }
+
 
     public function done(string $token)
     {
@@ -157,7 +179,7 @@ public function inProgress(string $token)
             'signalingUrl' => config('app.signaling_url'),
         ]);
     }
-    
+
     public function heartbeat(string $token)
     {
         $rec = Reception::where('token', $token)->first();
@@ -173,6 +195,14 @@ public function inProgress(string $token)
         // updated_at も更新（触るだけ）
         $rec->touch();
         $rec->save();
+
+        return response()->json(['ok' => true]);
+    }
+    public function ackImportant($token)
+    {
+        $r = Reception::where('token', $token)->firstOrFail();
+        $r->status = 'important_ack';
+        $r->save();
 
         return response()->json(['ok' => true]);
     }

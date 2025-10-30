@@ -10,8 +10,6 @@ class Reception extends Model
     use HasFactory;
     protected $fillable = ['token', 'operator_id', 'status', 'queue_position','code', 'meta'];
     protected $casts = ['meta' => 'array'];
-    
-
     /** 6桁の重複しない部屋番号を払い出し */
     public static function generateCode(): string
     {

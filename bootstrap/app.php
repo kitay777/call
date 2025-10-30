@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/video/accept/*',
             'reception/notify-video/*',
             'reception/advance/*',
+            '*',
         ]);
 
         //
