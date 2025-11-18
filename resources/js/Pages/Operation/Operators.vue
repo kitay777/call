@@ -2,6 +2,43 @@
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { usePage, router } from "@inertiajs/vue3";
 
+// ▼ モーダル制御
+const showFaceModal = ref(false);
+const showSignatureModal = ref(false);
+const showSessionSummaryModal = ref(false);
+
+// ▼ リスト
+const faceList = ref([]);
+const signatureList = ref([]);
+const sessionSummary = ref([]);
+
+// ▼ 顔一覧読み込み
+async function loadFaceCaptures() {
+    const res = await fetch("/operation/face-captures-json", {
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+    });
+    faceList.value = await res.json();
+    showFaceModal.value = true;
+}
+
+// ▼ 署名一覧読み込み
+async function loadSignatureList() {
+    const res = await fetch("/operation/signature-list-json", {
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+    });
+    signatureList.value = await res.json();
+    showSignatureModal.value = true;
+}
+
+// ▼ セッション別まとめ読み込み
+async function loadSessionSummary() {
+    const res = await fetch("/operation/session-summary-json", {
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+    });
+    sessionSummary.value = await res.json();
+    showSessionSummaryModal.value = true;
+}
+
 const page = usePage();
 const ops = computed(() => page.props.operators ?? []);
 const counts = computed(() => page.props.counts ?? {});
@@ -60,6 +97,29 @@ onUnmounted(() => clearInterval(timer));
 
 <template>
     <main class="p-6 space-y-6">
+                <!-- ▼ 最上部に追加する3つのボタン -->
+        <div class="flex flex-wrap gap-3 mb-6">
+            <button
+                class="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+                @click="loadFaceCaptures"
+            >
+                顔キャプチャ一覧
+            </button>
+
+            <button
+                class="px-4 py-2 bg-purple-600 text-white rounded-lg shadow hover:bg-purple-700"
+                @click="loadSignatureList"
+            >
+                署名一覧
+            </button>
+
+            <button
+                class="px-4 py-2 bg-indigo-600 text-white rounded-lg shadow hover:bg-indigo-700"
+                @click="loadSessionSummary"
+            >
+                顔＋署名（セッション別）一覧
+            </button>
+        </div>
         <!-- 上部に戻るボタン -->
         <div class="flex items-center justify-between mb-4">
             <h1 class="text-lg font-semibold text-slate-800">
@@ -181,6 +241,70 @@ onUnmounted(() => clearInterval(timer));
             </div>
         </div>
     </div>
+    <!-- 顔キャプチャ一覧モーダル -->
+<div v-if="showFaceModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl p-6 w-[90%] max-w-4xl shadow-xl relative">
+        <button class="absolute top-3 right-3 text-gray-600 hover:text-black" @click="showFaceModal=false">✖</button>
+        <h2 class="text-xl font-bold mb-4">顔キャプチャ一覧</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 max-h-[70vh] overflow-y-auto">
+            <div v-for="item in faceList" :key="item.id" class="border rounded p-2">
+                <img :src="item.image_url" class="rounded w-full mb-2" />
+                <div class="text-xs text-gray-600">
+                    Token: {{ item.token }}<br>
+                    Room: {{ item.code }}<br>
+                    {{ item.time }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 署名一覧モーダル -->
+<div v-if="showSignatureModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl p-6 w-[90%] max-w-4xl shadow-xl relative">
+        <button class="absolute top-3 right-3 text-gray-600 hover:text-black" @click="showSignatureModal=false">✖</button>
+        <h2 class="text-xl font-bold mb-4">署名一覧</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 max-h-[70vh] overflow-y-auto">
+            <div v-for="item in signatureList" :key="item.id" class="border rounded p-2">
+                <img :src="item.image_url" class="rounded w-full mb-2" />
+                <div class="text-xs text-gray-600">
+                    Token: {{ item.token }}<br>
+                    Room: {{ item.code }}<br>
+                    {{ item.time }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- セッション別 顔＋署名まとめ -->
+<div v-if="showSessionSummaryModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl p-6 w-[90%] max-w-5xl shadow-xl relative">
+        <button class="absolute top-3 right-3 text-gray-600 hover:text-black" @click="showSessionSummaryModal=false">✖</button>
+        <h2 class="text-xl font-bold mb-4">セッション別 顔＋署名 一覧</h2>
+        <div class="space-y-6 max-h-[70vh] overflow-y-auto">
+            <div v-for="item in sessionSummary" :key="item.token" class="border rounded-xl p-4 shadow">
+                <div class="font-semibold mb-2">
+                    Token: {{ item.token }} / Room: {{ item.code }}
+                    <span class="text-gray-500 text-sm ml-2">{{ item.time }}</span>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="text-center">
+                        <div class="text-sm mb-2">顔キャプチャ</div>
+                        <img v-if="item.face_image" :src="item.face_image" class="w-full rounded border" />
+                        <div v-else class="text-gray-400 text-sm">顔なし</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-sm mb-2">署名</div>
+                        <img v-if="item.signature_image" :src="item.signature_image" class="w-full rounded border bg-white" />
+                        <div v-else class="text-gray-400 text-sm">署名なし</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 </template>
 
 <style scoped>
