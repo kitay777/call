@@ -149,11 +149,15 @@ onUnmounted(() => clearInterval(timer));
                     {{ sessionDetail.code }} /
                     {{ sessionDetail.time }}
                 </div>
-
+                <br>
+                {{ sessionDetail.face_image }}
+                </br>
+                {{ sessionDetail.signature_image }}
+                </br>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <h3 class="text-sm font-medium mb-2">顔キャプチャ</h3>
-                        {{ sessionDetail.face_image }}
+                        
                         <img
                             v-if="sessionDetail.face_image"
                             :src="sessionDetail.face_image"
@@ -164,7 +168,6 @@ onUnmounted(() => clearInterval(timer));
 
                     <div>
                         <h3 class="text-sm font-medium mb-2">署名</h3>
-                        {{ sessionDetail.signature_image }}
                         <img
                             v-if="sessionDetail.signature_image"
                             :src="sessionDetail.signature_image"
