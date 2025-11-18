@@ -150,9 +150,11 @@ onUnmounted(() => clearInterval(timer));
                     {{ sessionDetail.time }}
                 </div>
                 <br>
-                {{ sessionDetail.face_image }}
+                <a href="{{ sessionDetail.face_image }}" target="_blank" rel="noopener noreferrer">
+                {{ sessionDetail.face_image }}</a>
                 </br>
-                {{ sessionDetail.signature_image }}
+                <a href="{{ sessionDetail.signature_image }}" target="_blank" rel="noopener noreferrer">
+                {{ sessionDetail.signature_image }}</a> 
                 </br>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
