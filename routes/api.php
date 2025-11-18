@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\VideoCallController;
+use App\Http\Controllers\ReceptionController;
 
 Route::post('/video/request/{token}', [VideoCallController::class, 'request'])
     ->name('api.video.request');
@@ -11,3 +12,5 @@ Route::post('/video/accept/{token}', [VideoCallController::class, 'accept'])
 
 Route::post('/video/stop/{token}', [VideoCallController::class, 'stop'])
     ->name('api.video.stop');
+
+//Route::post('/reception/{token}/face-upload', [ReceptionController::class, 'faceUpload']);

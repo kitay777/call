@@ -36,7 +36,118 @@ class OperationController extends Controller
             'counts'    => $counts,
         ]);
     }
+    public function sessionDetailJson(string $token)
+    {
+        $rec = \App\Models\Reception::where('token', $token)->firstOrFail();
 
+        return response()->json([
+            'id'      => $rec->id,
+            'token'   => $rec->token,
+            'code'    => $rec->code,
+            'time'    => $rec->created_at->format('Y-m-d H:i'),
+            'face_image' =>
+            !empty($rec->meta['face_image'])
+                ? asset('storage/' . $rec->meta['face_image'])
+                : null,
+            'signature_image' =>
+            !empty($rec->meta['signature_path'])
+                ? asset('storage/' . $rec->meta['signature_path'])
+                : null,
+        ]);
+    }
+
+    public function faceCapturesJson()
+    {
+        $rows = \App\Models\Reception::query()
+            ->whereNotNull('meta->face_image')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get()
+            ->map(fn($rec) => [
+                'id'    => $rec->id,
+                'token' => $rec->token,
+                'code'  => $rec->code,
+                'time'  => $rec->created_at->format('Y-m-d H:i'),
+                'image_url' => asset('storage/' . ($rec->meta['face_image'] ?? '')),
+            ]);
+
+        return response()->json($rows);
+    }
+    public function signatureListJson()
+    {
+        $rows = \App\Models\Reception::query()
+            ->whereNotNull('meta->signature_path')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get()
+            ->map(function ($rec) {
+                return [
+                    'id'    => $rec->id,
+                    'token' => $rec->token,
+                    'code'  => $rec->code,
+                    'time'  => $rec->created_at->format('Y-m-d H:i'),
+                    'image_url' => asset('storage/' . ($rec->meta['signature_path'] ?? '')),
+                ];
+            });
+
+        return response()->json($rows);
+    }
+
+    public function faceAndSignatureJson()
+    {
+        $rows = \App\Models\Reception::query()
+            ->where(function ($q) {
+                $q->whereNotNull('meta->face_image')
+                    ->orWhereNotNull('meta->signature_path');
+            })
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get()
+            ->map(function ($rec) {
+                return [
+                    'id'      => $rec->id,
+                    'token'   => $rec->token,
+                    'code'    => $rec->code,
+                    'time'    => $rec->created_at->format('Y-m-d H:i'),
+
+                    // ★ 顔と署名をまとめて返す
+                    'face_image' =>
+                    $rec->meta['face_image'] ?? null
+                        ? asset('storage/' . $rec->meta['face_image'])
+                        : null,
+
+                    'signature_image' =>
+                    $rec->meta['signature_path'] ?? null
+                        ? asset('storage/' . $rec->meta['signature_path'])
+                        : null,
+                ];
+            });
+
+        return response()->json($rows);
+    }
+
+
+    public function faceCaptures()
+    {
+        $rows = \App\Models\Reception::query()
+            ->whereNotNull('meta->face_image')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get()
+            ->map(function ($rec) {
+                return [
+                    'id'    => $rec->id,
+                    'token' => $rec->token,
+                    'code'  => $rec->code,
+                    'time'  => $rec->created_at->format('Y-m-d H:i'),
+                    'image_url' => asset('storage/' . ($rec->meta['face_image'] ?? '')),
+                ];
+            });
+
+        return \Inertia\Inertia::render('Operation/FaceCaptures', [
+            'captures' => $rows,
+        ]);
+    }
     // ●用の待機中受付（映像フラグ付き）を返す
     public function waitingList()
     {
@@ -45,7 +156,7 @@ class OperationController extends Controller
         $rows = Reception::query()
             ->whereIn('status', ['waiting', 'in_progress'])
             ->latest()->take(50)->get()
-            ->map(function($r) {
+            ->map(function ($r) {
                 $isAlive = $r->updated_at->gt(now()->subSeconds(10)); // 直近10秒以内なら生きてると判定
                 return [
                     'id'        => $r->id,
@@ -58,5 +169,4 @@ class OperationController extends Controller
 
         return response()->json($rows);
     }
-
 }

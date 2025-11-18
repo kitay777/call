@@ -1,7 +1,11 @@
+<!-- resources/js/Pages/Operator/Session.vue -->
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import io from "socket.io-client";
 
+/* ==============================
+   ■ props
+============================== */
 const props = defineProps({
     reception: { type: Object, required: true },
     signalingUrl: { type: String, default: "" },
@@ -12,6 +16,9 @@ const CSRF =
         .querySelector('meta[name="csrf-token"]')
         ?.getAttribute("content") || "";
 
+/* ==============================
+   ■ WebRTC 関連
+============================== */
 const localVideo = ref(null);
 const remoteVideo = ref(null);
 const connecting = ref(false);
@@ -30,6 +37,42 @@ const SIGNALING_URL =
     props.signalingUrl ||
     "";
 
+/* ==============================
+   ■ リアルタイム最新画像（顔 / 署名）
+============================== */
+const lastCapturedFace = ref(null);
+const lastCapturedSignature = ref(null);
+
+/* ==============================
+   ■ モーダル系（顔一覧 / 署名一覧 / セッションまとめ）
+============================== */
+const showFaceModal = ref(false);
+const faceList = ref([]);
+async function loadFaceCaptures() {
+    const res = await fetch("/operation/face-captures-json");
+    faceList.value = await res.json();
+    showFaceModal.value = true;
+}
+
+const showSignatureModal = ref(false);
+const signatureList = ref([]);
+async function loadSignatureList() {
+    const res = await fetch("/operation/signature-list-json");
+    signatureList.value = await res.json();
+    showSignatureModal.value = true;
+}
+
+const showSessionSummaryModal = ref(false);
+const sessionSummary = ref([]);
+async function loadSessionSummary() {
+    const res = await fetch("/operation/session-summary-json");
+    sessionSummary.value = await res.json();
+    showSessionSummaryModal.value = true;
+}
+
+/* ==============================
+   ■ Heartbeat
+============================== */
 let hbTimer;
 function heartbeat() {
     fetch(`/reception/heartbeat/${props.reception.token}`, {
@@ -37,10 +80,13 @@ function heartbeat() {
     }).catch(() => {});
 }
 
-
+/* ==============================
+   ■ Cleanup
+============================== */
 function cleanup() {
     connected.value = false;
     connecting.value = false;
+
     try {
         pc?.getSenders()?.forEach((s) => s.track && s.track.stop());
     } catch {}
@@ -48,54 +94,46 @@ function cleanup() {
         pc?.close();
     } catch {}
     pc = null;
+
     try {
         localStream?.getTracks()?.forEach((t) => t.stop());
     } catch {}
     localStream = null;
+
     try {
         socket?.disconnect();
     } catch {}
     socket = null;
+
     try {
         if (remoteVideo.value) remoteVideo.value.srcObject = null;
     } catch {}
 }
 
+/* ==============================
+   ■ Local media
+============================== */
 async function startLocalMedia() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 1280, height: 720 },
-            audio: true,
-        });
-        console.log(
-            "[callee] local tracks",
-            localStream.getTracks().map((t) => t.kind)
-        );
-
-        if (localVideo.value) {
-            localVideo.value.srcObject = localStream;
-            localVideo.value.muted = true;
-            localVideo.value.playsInline = true;
-            await localVideo.value.play().catch(() => {});
-        }
-    } catch (e) {
-        const name = e?.name || "";
-        errorMsg.value =
-            name === "NotAllowedError" || name === "SecurityError"
-                ? "カメラ/マイクの許可が必要です。ブラウザの設定を確認してください。"
-                : e?.message || String(e);
-        console.error(e);
-        throw e;
+    localStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720 },
+        audio: true,
+    });
+    if (localVideo.value) {
+        localVideo.value.srcObject = localStream;
+        localVideo.value.muted = true;
+        await localVideo.value.play().catch(() => {});
     }
 }
 
+/* ==============================
+   ■ joinCall
+============================== */
 async function joinCall() {
     try {
         if (!SIGNALING_URL) throw new Error("SIGNALING_URL が未設定です");
-        errorMsg.value = "";
         connecting.value = true;
 
-        // === roomId 確定 ===
+        // --- roomId 確定（API → fallback）
         try {
             const res = await fetch(
                 `/api/video/accept/${encodeURIComponent(
@@ -109,77 +147,108 @@ async function joinCall() {
                     },
                 }
             );
-            if (res.ok) {
-                const data = await res.json();
-                roomId = data?.roomId || "";
-            }
+            if (res.ok) roomId = (await res.json())?.roomId || "";
         } catch {}
+
         if (!roomId)
             roomId =
                 props.reception?.meta?.room_id ||
                 props.reception?.code ||
-                props.reception?.token ||
-                "";
+                props.reception?.token;
         if (!roomId) throw new Error("roomId not decided");
 
-        console.log("[callee] roomId", roomId);
-
-        // === RTCPeerConnection ===
+        // --- RTCPeerConnection ---
         pc = new RTCPeerConnection({
             iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
 
-        // === Remote 映像 ===
         remoteStream = new MediaStream();
         if (remoteVideo.value) {
             remoteVideo.value.srcObject = remoteStream;
             remoteVideo.value.autoplay = true;
-            remoteVideo.value.playsInline = true;
-            // ⚠️ muted削除：受信側は音声を再生可能に
             remoteVideo.value.muted = false;
         }
 
         pc.ontrack = (e) => {
-            console.log(
-                "[callee] ontrack event",
-                e.track?.kind,
-                e.streams?.length
-            );
             const stream = e.streams?.[0];
-            if (!stream) return;
-            if (remoteVideo.value) {
+            if (remoteVideo.value && stream) {
                 remoteVideo.value.srcObject = stream;
-                remoteVideo.value.muted = false;
-                remoteVideo.value.playsInline = true;
-                remoteVideo.value.autoplay = true;
-                remoteVideo.value
-                    .play()
-                    .then(() => console.log("[callee] remote video playing"))
-                    .catch((err) =>
-                        console.warn("[callee] play() failed", err)
-                    );
             }
         };
 
-        // === Localメディア ===
         await startLocalMedia();
-        localStream.getTracks().forEach((t) => {
-            console.log("[callee] addTrack", t.kind);
-            pc.addTrack(t, localStream);
-        });
+        localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
 
-        // === ICE ===
         pc.onicecandidate = (e) => {
             if (e.candidate && socket && roomId)
-                socket.emit("ice-candidate", {
-                    roomId,
-                    candidate: e.candidate,
-                });
+                socket.emit("ice-candidate", { roomId, candidate: e.candidate });
         };
 
-        // === Socket.IO ===
+        // --- Socket.IO ---
         socket = io(SIGNALING_URL, { transports: ["websocket"] });
-        socket.on("connect_error", (e) => console.error("[callee socket]", e));
+
+        /* ==============================
+           ★★★ Phase-change（完全統合版） ★★★
+        =============================== */
+        socket.on("phase-change", ({ phase, image }) => {
+            console.log("[operator] phase-change:", phase, image);
+
+            if (phase === "face_captured") {
+                lastCapturedFace.value = image;
+                return;
+            }
+
+            if (phase === "signature_done") {
+                lastCapturedSignature.value = image;
+                return;
+            }
+
+            if (phase.startsWith("important_check_")) {
+                const num = phase.split("_")[2];
+                alert(`ユーザーが ${num} 番目を確認しました`);
+                return;
+            }
+
+            if (phase === "important_done") {
+                alert("ユーザーが同意を完了しました");
+                return;
+            }
+        });
+
+        // --- Answer受信 ---
+        socket.on("sdp-answer", async ({ sdp }) => {
+            await pc.setRemoteDescription({ type: "answer", sdp });
+            connected.value = true;
+            connecting.value = false;
+        });
+
+        // --- Offer受信 ---
+        socket.on("sdp-offer", async ({ sdp, roomId: rid }) => {
+            if (rid && rid !== roomId) return;
+            await pc.setRemoteDescription({ type: "offer", sdp });
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit("sdp-answer", {
+                roomId,
+                role: "callee",
+                sdp: answer.sdp,
+            });
+            connected.value = true;
+            connecting.value = false;
+        });
+
+        socket.on("ice-candidate", async ({ candidate }) => {
+            if (candidate) await pc.addIceCandidate(candidate).catch(() => {});
+        });
+
+        socket.once("connect", () => {
+            socket.emit("join-room", { roomId, role: "callee" });
+        });
+
+        // caller が join したら先手 offer を送る
+        socket.on("peer-joined", ({ role }) => {
+            if (role === "caller") sendOwnOffer();
+        });
 
         const sendOwnOffer = async () => {
             try {
@@ -193,110 +262,55 @@ async function joinCall() {
                     role: "callee",
                     sdp: offer.sdp,
                 });
-                console.log("[callee] sent own offer");
             } catch (e) {
-                console.error("[callee] offer failed", e);
+                console.error("offer error", e);
             }
         };
-        // === 自分の offer に対する answer を受信 ===
-        socket.on("sdp-answer", async ({ sdp }) => {
-            try {
-                await pc.setRemoteDescription({ type: "answer", sdp });
-                connected.value = true; // ✅ KurentoからAnswerを受け取ったら接続完了
-                connecting.value = false;
-                console.log("[callee] got answer → connection established ✅");
-            } catch (e) {
-                console.error("[callee sdp-answer error]", e);
-            }
-        });
-
-        socket.on("phase-change", ({ phase }) => {
-            if (phase.startsWith("important_check_")) {
-                const num = phase.split("_")[2];
-                alert(`☑ ユーザーが ${num} 番目の項目を確認しました。`);
-            } else if (phase === "important_done") {
-                alert(
-                    "✅ ユーザーがすべての項目を確認し、同意を完了しました。"
-                );
-            }
-        });
-        // === join-room の後 ===
-        socket.once("peer-joined", async ({ roomId }) => {
-            console.log("[callee] peer joined, waiting offer...");
-        });
-
-        // === 受信専用 offer 処理 ===
-        socket.on("sdp-offer", async ({ sdp, roomId: rid }) => {
-            try {
-                if (!sdp || (rid && rid !== roomId)) return;
-                console.log("[callee] got caller offer");
-                await pc.setRemoteDescription({ type: "offer", sdp });
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                socket.emit("sdp-answer", {
-                    roomId,
-                    role: "callee",
-                    sdp: answer.sdp,
-                });
-                connected.value = true;
-                connecting.value = false;
-            } catch (e) {
-                console.error("[callee sdp-offer error]", e);
-            }
-        });
-
-        socket.on("ice-candidate", async ({ candidate }) => {
-            try {
-                if (candidate) await pc.addIceCandidate(candidate);
-            } catch {}
-        });
-
-        // === join-room 後にOffer送信 ===
-        socket.once("connect", () => {
-            console.log("[callee] socket connected, joining room...");
-            socket.emit("join-room", { roomId, role: "callee" }, () => {
-                console.log("[callee] joined room, waiting for caller...");
-            });
-        });
-
-        // 🔹 caller が部屋に入ってから offer 送信
-        socket.on("peer-joined", ({ role }) => {
-            if (role === "caller") {
-                console.log("[callee] caller joined, sending offer...");
-                sendOwnOffer();
-            }
-        });
     } catch (e) {
         errorMsg.value = e?.message || String(e);
         leaveCall();
     }
-    console.log(
-        "[callee] senders:",
-        pc.getSenders().map((s) => ({
-            kind: s.track?.kind,
-            readyState: s.track?.readyState,
-            enabled: s.track?.enabled,
-        }))
-    );
 }
 
+/* ==============================
+   ■ leaveCall
+============================== */
 function leaveCall() {
-  try {
-    // 相手にも stop 通知を送る
-    socket && roomId && socket.emit("stop", { roomId });
-  } catch (e) {
-    console.warn("stop emit failed", e);
-  }
-
-  // 安全にクリーンアップ
-  cleanup();
-
-  // ✅ ページ遷移：オペレータ一覧へ戻す
-  window.location.href = "/operation/operators";
+    try {
+        socket && roomId && socket.emit("stop", { roomId });
+    } catch {}
+    cleanup();
+    window.location.href = "/operation/operators";
 }
 
+/* ==============================
+   ■ sendPhase
+============================== */
+function sendPhase(phase) {
+    if (!socket || !socket.connected) {
+        console.warn("[operator] socket not ready");
+        return;
+    }
+    if (!roomId) {
+        console.warn("[operator] no roomId");
+        return;
+    }
 
+    if (!connected.value) {
+        console.warn("[operator] not connected yet, retrying...");
+        setTimeout(() => sendPhase(phase), 500);
+        return;
+    }
+
+    socket.emit("phase-change", { roomId, phase });
+    console.log("[operator] sent phase:", phase);
+}
+
+/* ==============================
+   ■ Mounted / Unmounted
+============================== */
 onMounted(() => {
+    joinCall();
     heartbeat();
     hbTimer = setInterval(heartbeat, 5000);
 });
@@ -304,35 +318,15 @@ onBeforeUnmount(() => {
     if (hbTimer) clearInterval(hbTimer);
     cleanup();
 });
-function sendPhase(phase) {
-    if (!socket || !socket.connected) {
-        console.warn("[callee] socket not ready");
-        return;
-    }
-    if (!roomId) {
-        console.warn("[callee] no roomId");
-        return;
-    }
-
-    // ✅ connected が false のときは再試行する
-    if (!connected.value) {
-        console.warn("[callee] not connected yet, retrying...");
-        setTimeout(() => sendPhase(phase), 1000);
-        return;
-    }
-
-    socket.emit("phase-change", { roomId, phase });
-    console.log("[callee] sent phase:", phase);
-}
 </script>
 
 <template>
     <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 p-6">
+        <!-- 左エリア（映像） -->
         <div class="space-y-3">
             <div
                 class="aspect-video bg-black rounded-xl border overflow-hidden grid place-items-center"
             >
-                <!-- ⚠️ muted 削除 -->
                 <video
                     ref="remoteVideo"
                     autoplay
@@ -373,21 +367,21 @@ function sendPhase(phase) {
                 <span
                     v-if="connected"
                     class="text-green-600 text-sm self-center"
+                    >接続中</span
                 >
-                    接続中
-                </span>
                 <span
                     v-else-if="connecting"
                     class="text-slate-500 text-sm self-center"
+                    >接続準備中…</span
                 >
-                    接続準備中…
-                </span>
             </div>
 
             <p v-if="errorMsg" class="text-red-600 text-sm">
                 Error: {{ errorMsg }}
             </p>
         </div>
+
+        <!-- 右サイド（ステップ＋リアルタイム画像） -->
         <aside class="space-y-3">
             <div class="rounded-xl border p-4">
                 <div class="text-sm font-semibold mb-3">ステップ操作</div>
@@ -412,7 +406,176 @@ function sendPhase(phase) {
                     </button>
                 </div>
             </div>
+
+            <!-- ★ 最新の顔キャプチャ -->
+            <div
+                v-if="lastCapturedFace"
+                class="rounded-xl border p-4 bg-white shadow"
+            >
+                <div class="text-sm font-semibold mb-2">
+                    最新の本人確認画像
+                </div>
+                <img :src="lastCapturedFace" class="w-full rounded border" />
+            </div>
+
+            <!-- ★ 最新の署名 -->
+            <div
+                v-if="lastCapturedSignature"
+                class="rounded-xl border p-4 bg-white shadow"
+            >
+                <div class="text-sm font-semibold mb-2">最新の署名</div>
+                <img
+                    :src="lastCapturedSignature"
+                    class="w-full rounded border bg-white"
+                />
+            </div>
         </aside>
+    </div>
+
+    <!-- ▼ ボタン群 -->
+    <div class="mt-6 text-center space-y-4">
+        <button
+            @click="loadSessionSummary"
+            class="px-6 py-3 bg-indigo-600 text-white rounded-xl shadow hover:bg-indigo-700"
+        >
+            顔＋署名（セッション別）一覧
+        </button>
+        <button
+            @click="loadFaceCaptures"
+            class="px-6 py-3 bg-blue-600 text-white rounded-xl shadow hover:bg-blue-700"
+        >
+            顔キャプチャ一覧
+        </button>
+        <button
+            @click="loadSignatureList"
+            class="px-6 py-3 bg-purple-600 text-white rounded-xl shadow hover:bg-purple-700"
+        >
+            署名一覧
+        </button>
+    </div>
+
+    <!-- モーダル：顔一覧 -->
+    <div
+        v-if="showFaceModal"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+    >
+        <div
+            class="bg-white rounded-xl p-6 w-[90%] max-w-4xl shadow-xl relative"
+        >
+            <button
+                class="absolute top-3 right-3 text-gray-600 hover:text-black"
+                @click="showFaceModal = false"
+            >
+                ✖
+            </button>
+            <h2 class="text-xl font-bold mb-4">顔キャプチャ一覧</h2>
+            <div
+                class="grid grid-cols-2 md:grid-cols-4 gap-4 max-h-[70vh] overflow-y-auto"
+            >
+                <div
+                    v-for="item in faceList"
+                    :key="item.id"
+                    class="border rounded p-2"
+                >
+                    <img :src="item.image_url" class="rounded w-full mb-2" />
+                    <div class="text-xs text-gray-600">
+                        Token: {{ item.token }}<br />
+                        Room: {{ item.code }}<br />
+                        {{ item.time }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダル：署名一覧 -->
+    <div
+        v-if="showSignatureModal"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+    >
+        <div
+            class="bg-white rounded-xl p-6 w-[90%] max-w-4xl shadow-xl relative"
+        >
+            <button
+                class="absolute top-3 right-3 text-gray-600 hover:text-black"
+                @click="showSignatureModal = false"
+            >
+                ✖
+            </button>
+            <h2 class="text-xl font-bold mb-4">署名一覧</h2>
+            <div
+                class="grid grid-cols-2 md:grid-cols-4 gap-4 max-h-[70vh] overflow-y-auto"
+            >
+                <div
+                    v-for="item in signatureList"
+                    :key="item.id"
+                    class="border rounded p-2"
+                >
+                    <img :src="item.image_url" class="rounded w-full mb-2" />
+                    <div class="text-xs text-gray-600">
+                        Token: {{ item.token }}<br />
+                        Room: {{ item.code }}<br />
+                        {{ item.time }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダル：セッション別まとめ -->
+    <div
+        v-if="showSessionSummaryModal"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+    >
+        <div
+            class="bg-white rounded-xl p-6 w-[90%] max-w-5xl shadow-xl relative"
+        >
+            <button
+                class="absolute top-3 right-3 text-gray-600 hover:text-black"
+                @click="showSessionSummaryModal = false"
+            >
+                ✖
+            </button>
+            <h2 class="text-xl font-bold mb-4">セッション別 顔＋署名 一覧</h2>
+            <div class="space-y-6 max-h-[70vh] overflow-y-auto">
+                <div
+                    v-for="item in sessionSummary"
+                    :key="item.id"
+                    class="border rounded-xl p-4 shadow"
+                >
+                    <div class="font-semibold mb-2">
+                        Token: {{ item.token }} / Room: {{ item.code }}
+                        <span class="text-gray-500 text-sm ml-2">
+                            {{ item.time }}
+                        </span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="text-center">
+                            <div class="text-sm mb-2">顔キャプチャ</div>
+                            <img
+                                v-if="item.face_image"
+                                :src="item.face_image"
+                                class="w-full rounded border"
+                            />
+                            <div v-else class="text-gray-400 text-sm">
+                                顔なし
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-sm mb-2">署名</div>
+                            <img
+                                v-if="item.signature_image"
+                                :src="item.signature_image"
+                                class="w-full rounded border bg-white"
+                            />
+                            <div v-else class="text-gray-400 text-sm">
+                                署名なし
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 

@@ -51,31 +51,32 @@ class OperatorController extends Controller
         return response()->json(['ok' => true]);
     }
 
-public function session(string $token)
-{
-    $rec = Reception::whereToken($token)->firstOrFail();
 
-    // ★ room_id を Reception 側と同一ルールで強制
-    $meta = $rec->meta ?? [];
-    if (empty($meta['room_id'])) {
-        $meta['room_id'] = $rec->code ?: $rec->token;
-        $rec->meta = $meta;
-        $rec->save();
+    public function session(string $token)
+    {
+        $rec = Reception::whereToken($token)->firstOrFail();
+
+        // ★ room_id を Reception 側と同一ルールで強制
+        $meta = $rec->meta ?? [];
+        if (empty($meta['room_id'])) {
+            $meta['room_id'] = $rec->code ?: $rec->token;
+            $rec->meta = $meta;
+            $rec->save();
+        }
+        $roomId = $meta['room_id'];
+
+        return Inertia::render('Operator/Session', [
+            'reception' => [
+                'token'     => $rec->token,
+                'status'    => $rec->status,
+                'has_video' => (bool)($meta['has_video'] ?? false),
+                'code'      => $rec->code,
+                // ★ Vue 側でroomId計算させず、直で渡す（ズレを物理的に排除）
+                'meta'      => ['room_id' => $roomId],
+            ],
+            'signalingUrl' => config('app.signaling_url'),
+        ]);
     }
-    $roomId = $meta['room_id'];
-
-    return Inertia::render('Operator/Session', [
-        'reception' => [
-            'token'     => $rec->token,
-            'status'    => $rec->status,
-            'has_video' => (bool)($meta['has_video'] ?? false),
-            'code'      => $rec->code,
-            // ★ Vue 側でroomId計算させず、直で渡す（ズレを物理的に排除）
-            'meta'      => ['room_id' => $roomId],
-        ],
-        'signalingUrl' => config('app.signaling_url'),
-    ]);
-}
 
 
     /**

@@ -13,8 +13,8 @@ use App\Http\Controllers\OperationController;
 |--------------------------------------------------------------------------
 | ※ ルート重複なし。token/code は英数ハイフンのみ許可。
 */
-Route::post('/reception/ack-important/{token}', [ReceptionController::class, 'ackImportant']);
 
+Route::post('/reception/ack-important/{token}', [ReceptionController::class, 'ackImportant']);
 
 Route::prefix('reception')->group(function () {
     Route::get('heartbeat/{token}', [ReceptionController::class, 'heartbeat'])
@@ -108,34 +108,56 @@ Route::middleware('auth')->group(function () {
     Route::post('/operator/state', [OperatorController::class, 'updateSelfState'])->name('operator.state');
 });
 
+Route::get(
+    '/operation/face-captures-json',
+    [OperationController::class, 'faceCapturesJson']
+);
+Route::get(
+    '/operation/signature-list-json',
+    [OperationController::class, 'signatureListJson']
+)->name('operation.signature.json');
+Route::get(
+    '/operation/session-summary-json',
+    [OperationController::class, 'faceAndSignatureJson']
+)->name('operation.session.summary');
 /*
 |--------------------------------------------------------------------------
 | Operations (admin)
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth', 'can:manage-operators'])->group(function () {
-    Route::get('/admin',    [OperationController::class,'index'])->name('admin.dashboard');
-    Route::get('/operation/operators',    [OperationController::class,'index'])->name('operation.operators.index');
-    Route::get('/operation/waiting-list', [OperationController::class,'waitingList'])->name('operation.waitingList');
+    Route::get('/admin',    [OperationController::class, 'index'])->name('admin.dashboard');
+    Route::get('/operation/operators',    [OperationController::class, 'index'])->name('operation.operators.index');
+    Route::get('/operation/waiting-list', [OperationController::class, 'waitingList'])->name('operation.waitingList');
     Route::post('/operation/operators/{user}/state', [OperationController::class, 'updateState'])
         ->name('operation.operators.update');
+    Route::get('/operation/face-captures', [OperationController::class, 'faceCaptures'])
+        ->name('operation.face.captures');
 });
 
+Route::get(
+    '/operation/session-detail-json/{token}',
+    [OperationController::class, 'sessionDetailJson']
+)->name('operation.session.detail');
+
+Route::post('/reception/{token}/face-upload',
+    [ReceptionController::class, 'faceUpload']
+);
 /*
 |--------------------------------------------------------------------------
 | App / Profile / Auth
 |--------------------------------------------------------------------------
 */
-Route::get('/', fn () => redirect()->route('reception.start'));
+Route::get('/', fn() => redirect()->route('reception.start'));
 
-Route::get('/dashboard', fn () => Inertia::render('Dashboard'))
+Route::get('/dashboard', fn() => Inertia::render('Dashboard'))
     ->middleware(['auth', 'verified'])
     ->name('dashboard');
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile',  [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::patch('/profile',[ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile',[ProfileController::class, 'destroy'])->name('profile.destroy');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
 require __DIR__ . '/auth.php';

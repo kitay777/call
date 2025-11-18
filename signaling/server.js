@@ -236,35 +236,35 @@ io.on("connection", (socket) => {
     log("connected", socket.id);
 
     // === Phase Change ===
-    socket.on("phase-change", ({ roomId, phase }) => {
-        if (!roomId) return;
-        console.log("[sig] phase-change", roomId, phase);
-        socket.to(roomId).emit("phase-change", { roomId, phase }); // 🔁 他方へ通知
-    });
+socket.on("phase-change", (payload) => {
+    const { roomId } = payload;
+    if (!roomId) return;
+
+    console.log("[sig] phase-change", payload);
+
+    // 画像を含む payload を丸ごと送る
+    socket.to(roomId).emit("phase-change", payload);
+});
+
 
     // === Join Room ===
-    socket.on("join-room", ({ roomId, role }, ack) => {
-        try {
-            if (!roomId) return ack?.({ ok: false, error: "no roomId" });
+socket.on("join-room", ({ roomId, role }, ack) => {
+    try {
+        if (!roomId) return ack?.({ ok: false, error: "no roomId" });
 
-            socket.join(roomId);
-            socket.to(roomId).emit("peer-joined", { roomId, role });
-            log("[sig] peer-joined emitted", roomId, role);
+        // 🔥 そのまま部屋に join
+        socket.join(roomId);
 
-            const room = io.sockets.adapter.rooms.get(roomId);
-            if (room && room.size > 1) {
-                socket.emit("peer-joined", {
-                    roomId,
-                    role: role === "caller" ? "callee" : "caller",
-                });
-                log("[sig] peer-joined echo to self", roomId);
-            }
+        // 🔥 相手側へ「誰が join したか」を通知（反転しない！）
+        socket.to(roomId).emit("peer-joined", { roomId, role });
 
-            ack?.({ ok: true });
-        } catch (e) {
-            ack?.({ ok: false, error: String(e) });
-        }
-    });
+        // オプション：必要なら caller/callee を記録しても良いが反転はしない
+        ack?.({ ok: true });
+    } catch (e) {
+        ack?.({ ok: false, error: String(e) });
+    }
+});
+
 
     // === SDP Offer ===
     socket.on("sdp-offer", async ({ roomId, role, sdp }) => {

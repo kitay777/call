@@ -15,6 +15,36 @@ class ReceptionController extends Controller
         return Inertia::render('Reception/Start');
     }
 
+    public function faceUpload(Request $request, string $token)
+    {
+        $rec = Reception::whereToken($token)->firstOrFail();
+
+        $data = $request->validate([
+            'image' => 'required|string',
+        ]);
+
+        // Base64 デコード
+        $base64 = preg_replace('#^data:image/\w+;base64,#i', '', $data['image']);
+        $binary = base64_decode($base64);
+
+        // 保存
+        $filename = 'face_' . $rec->id . '_' . time() . '.png';
+        $path = "faces/{$filename}";
+
+        \Storage::disk('public')->put($path, $binary);
+
+        // meta に記録
+        $meta = $rec->meta ?? [];
+        $meta['face_image'] = $path;
+        $rec->meta = $meta;
+        $rec->save();
+
+        return response()->json([
+            'ok'   => true,
+            'path' => $path,
+            'url'  => asset('storage/' . $path),
+        ]);
+    }
     public function startPost(Request $request)
     {
         // 受付の新規発行（デモ用に in_progress を直指定するならここで）
@@ -126,7 +156,7 @@ class ReceptionController extends Controller
             }
         }
 
-        return response()->json(['ok' => true, 'path' => $path]);
+        return response()->json(['ok' => true, 'path' => $path, 'url' => asset('storage/' . $path),]);
     }
 
 
