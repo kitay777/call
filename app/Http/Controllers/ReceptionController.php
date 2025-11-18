@@ -23,17 +23,17 @@ class ReceptionController extends Controller
             'image' => 'required|string',
         ]);
 
-        // Base64 デコード
         $base64 = preg_replace('#^data:image/\w+;base64,#i', '', $data['image']);
         $binary = base64_decode($base64);
 
-        // 保存
-        $filename = 'face_' . $rec->id . '_' . time() . '.png';
+        // ▼ 日付＋時間
+        $timestamp = now()->format('Ymd_His');
+        $filename = "face_{$timestamp}.png";
+
         $path = "faces/{$filename}";
 
         \Storage::disk('public')->put($path, $binary);
 
-        // meta に記録
         $meta = $rec->meta ?? [];
         $meta['face_image'] = $path;
         $rec->meta = $meta;
@@ -42,9 +42,10 @@ class ReceptionController extends Controller
         return response()->json([
             'ok'   => true,
             'path' => $path,
-            'url'  => asset('storage/' . $path),
+            'url'  => asset("storage/{$path}"),
         ]);
     }
+
     public function startPost(Request $request)
     {
         // 受付の新規発行（デモ用に in_progress を直指定するならここで）
@@ -138,26 +139,28 @@ class ReceptionController extends Controller
     {
         $rec = Reception::whereToken($token)->firstOrFail();
         $img = $request->input('image');
+
         if ($img) {
             $data = explode(',', $img);
             $decoded = base64_decode($data[1]);
-            $path = "signatures/{$rec->token}.png";
-            \Storage::disk('public')->put($path, $decoded);
-            $rec->meta = array_merge($rec->meta ?? [], ['signature_path' => $path]);
-            $rec->save();
 
-            // 🚀 Signalingサーバーへ通知（非同期OK）
-            try {
-                Http::post(env('SIGNALING_API_URL', 'https://dev.call.navi.jpn.com/api/signature-done'), [
-                    'roomId' => $rec->meta['room_id'] ?? $rec->code,
-                ]);
-            } catch (\Throwable $e) {
-                \Log::warning('Failed to notify signaling server: ' . $e->getMessage());
-            }
+            // ▼ 日付＋時間に変更
+            $timestamp = now()->format('Ymd_His');
+            $filename = "signature_{$timestamp}.png";
+
+            $path = "signatures/{$filename}";
+
+            \Storage::disk('public')->put($path, $decoded);
+
+            $meta = $rec->meta ?? [];
+            $meta['signature_path'] = $path;
+            $rec->meta = $meta;
+            $rec->save();
         }
 
-        return response()->json(['ok' => true, 'path' => $path, 'url' => asset('storage/' . $path),]);
+        return response()->json(['ok' => true, 'path' => $path, 'url' => asset("storage/{$path}")]);
     }
+
 
 
     public function done(string $token)
