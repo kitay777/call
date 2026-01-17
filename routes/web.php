@@ -13,6 +13,33 @@ use App\Http\Controllers\OperationController;
 |--------------------------------------------------------------------------
 | ※ ルート重複なし。token/code は英数ハイフンのみ許可。
 */
+use App\Http\Controllers\Operation\VideoController;
+
+Route::middleware(['auth'])
+    ->prefix('operation')
+    ->group(function () {
+        Route::get('/videos-json', [VideoController::class, 'list']);
+    });
+Route::get('/operation/videos/{publicToken}', [VideoController::class, 'show']);
+Route::post('/operation/videos/{id}/confirm', [VideoController::class, 'confirm']);
+
+Route::post(
+    '/reception/{token}/video-confirm',
+    [ReceptionController::class, 'confirmVideo']
+);
+
+Route::get('/operation/videos',        [VideoController::class, 'index']);
+Route::post('/operation/videos/{video}/activate',   [VideoController::class, 'activate']);
+Route::post('/operation/videos/{video}/deactivate', [VideoController::class, 'deactivate']);
+
+// 管理側（登録）
+Route::post('/operation/videos', [VideoController::class, 'store']);
+
+// ユーザー側（現在の有効動画）
+Route::get('/videos/active-json', [VideoController::class, 'active']);
+
+// 公開URL
+Route::get('/videos/watch/{token}', [VideoController::class, 'watch']);
 
 Route::post('/reception/ack-important/{token}', [ReceptionController::class, 'ackImportant']);
 

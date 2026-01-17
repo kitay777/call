@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 class Reception extends Model
 {
     use HasFactory;
-    protected $fillable = ['token', 'operator_id', 'status', 'queue_position','code', 'meta'];
+    protected $fillable = ['token', 'operator_id', 'status', 'queue_position', 'code', 'meta'];
     protected $casts = ['meta' => 'array'];
     /** 6桁の重複しない部屋番号を払い出し */
     public static function generateCode(): string
@@ -23,5 +23,9 @@ class Reception extends Model
     {
         return $this->belongsTo(User::class, 'operator_id');
     }
-    
+
+    public function videoConfirms()
+    {
+        return $this->hasMany(ReceptionVideoConfirm::class);
+    }
 }

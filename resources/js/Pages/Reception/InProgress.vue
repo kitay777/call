@@ -10,6 +10,7 @@ const CSRF =
         .querySelector('meta[name="csrf-token"]')
         ?.getAttribute("content") || "";
 
+
 // ======== 映像関連 ========
 const remoteVideoEl = ref(null);
 const localVideoEl = ref(null);
@@ -19,6 +20,8 @@ const hasLocal = ref(false);
 // ======== ステップ状態 ========
 const showDocument = ref(false);
 const currentIndex = ref(0);
+const showVideoModal = ref(false);
+const currentVideo = ref(null);
 const checks = [
     "1. 重要事項の内容を理解しました。",
     "2. 契約条件および補償内容を確認しました。",
@@ -104,24 +107,27 @@ async function captureFace() {
     const base64 = canvas.toDataURL("image/png");
 
     try {
-        const res = await fetch(`/reception/${props.reception.token}/face-upload`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRF-TOKEN": CSRF,
-                "X-Requested-With": "XMLHttpRequest",
-            },
-            body: JSON.stringify({ image: base64 }),
-        });
+        const res = await fetch(
+            `/reception/${props.reception.token}/face-upload`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-TOKEN": CSRF,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                body: JSON.stringify({ image: base64 }),
+            }
+        );
 
         const j = await res.json();
         console.log("Face uploaded:", j);
-const payload = {
-    roomId,
-    phase: "face_captured",
-    image: j.url,
-};
-console.log("[caller] emit phase-change payload:", payload);
+        const payload = {
+            roomId,
+            phase: "face_captured",
+            image: j.url,
+        };
+        console.log("[caller] emit phase-change payload:", payload);
         // 🔥 オペレーターへリアルタイム通知
         socket?.emit("phase-change", {
             roomId,
@@ -183,40 +189,66 @@ async function join() {
     });
 
     // ===== フェーズ受信 =====
-    socket.on("phase-change", async ({ phase, image }) => {
-        console.log("[caller] phase-change:", phase, image);
+    socket.on(
+        "phase-change",
+        async ({ phase, image, video_id, video_type }) => {
+            console.log("[caller] phase-change:", phase, image);
 
-        if (phase === "important") {
-            showDocument.value = true;
-            showSignPad.value = false;
-            currentIndex.value = 0;
-            return;
-        }
+            if (phase === "video") {
+                console.log(
+                    "[caller] phase-change:",
+                    phase,
+                    video_type,
+                    video_id
+                );
 
-        if (phase === "sign") {
-            showDocument.value = false;
-            showSignPad.value = true;
-            await nextTick();
-            setTimeout(() => initSignaturePad(), 150);
-            return;
-        }
+                const res = await fetch(`/api/reception/videos/${video_id}`, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
 
-        if (phase === "verify") {
-            console.log("[caller] verify received → capture face");
-            await captureFace();
-            return;
-        }
+                const video = await res.json();
 
-        // important_check_x / important_done は既存通り
-        if (phase.startsWith("important_check_")) {
-            // ここはオペレーター向け通知なので caller 側では特に何もしない
-            return;
+                currentVideo.value = {
+                    ...video, // id, title, file_path など
+                    video_type, // required / optional
+                };
+
+                showVideoModal.value = true;
+                return;
+            }
+
+            if (phase === "important") {
+                showDocument.value = true;
+                showSignPad.value = false;
+                currentIndex.value = 0;
+                return;
+            }
+
+            if (phase === "sign") {
+                showDocument.value = false;
+                showSignPad.value = true;
+                await nextTick();
+                setTimeout(() => initSignaturePad(), 150);
+                return;
+            }
+
+            if (phase === "verify") {
+                console.log("[caller] verify received → capture face");
+                await captureFace();
+                return;
+            }
+
+            // important_check_x / important_done は既存通り
+            if (phase.startsWith("important_check_")) {
+                // ここはオペレーター向け通知なので caller 側では特に何もしない
+                return;
+            }
+            if (phase === "important_done") {
+                // ここも同様（必要ならUI更新）
+                return;
+            }
         }
-        if (phase === "important_done") {
-            // ここも同様（必要ならUI更新）
-            return;
-        }
-    });
+    );
 
     const emitOffer = async () => {
         await new Promise((resolve) =>
@@ -368,6 +400,31 @@ async function submitSignature() {
         alert("署名送信に失敗しました。ページを再読み込みしてください。");
     }
 }
+async function confirmVideo() {
+    console.log("confirmVideo:", currentVideo.value);
+    console.log("props.reception.token:", props.reception.token);
+    await fetch(`/reception/${props.reception.token}/video-confirm`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-TOKEN": CSRF,
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({
+            video_id: currentVideo.value.id,
+            video_type: currentVideo.value.video_type,
+        }),
+    });
+
+    socket?.emit("phase-change", {
+        roomId,
+        phase: "video_confirmed",
+        video_id: currentVideo.value.id,
+    });
+
+    showVideoModal.value = false;
+}
+
 
 // ===== クリーンアップ =====
 function leaveAll() {
@@ -480,6 +537,43 @@ onBeforeUnmount(() => {
                     class="px-4 py-2 bg-emerald-600 text-white rounded"
                 >
                     送信
+                </button>
+            </div>
+        </div>
+        <div
+            v-if="showVideoModal && currentVideo"
+            class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+        >
+            <div class="bg-white rounded-xl w-[90%] max-w-3xl p-6 relative">
+                <button
+                    class="absolute top-3 right-3"
+                    @click="showVideoModal = false"
+                >
+                    ✖
+                </button>
+
+                <h2 class="text-lg font-semibold mb-2">
+                    {{ currentVideo.title }}
+                </h2>
+
+                <p
+                    v-if="currentVideo.video_type === 'required'"
+                    class="text-sm text-red-600 mb-3"
+                >
+                    ※ この動画は必ず確認してください
+                </p>
+
+                <video
+                    class="w-full rounded bg-black mb-4"
+                    controls
+                    :src="`/storage/${currentVideo.file_path}`"
+                ></video>
+
+                <button
+                    class="w-full py-3 bg-emerald-600 text-white rounded-xl"
+                    @click="confirmVideo"
+                >
+                    確認しました
                 </button>
             </div>
         </div>

@@ -7,6 +7,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Illuminate\Support\Carbon;
+use App\Models\Video;
+use App\Models\ReceptionVideoConfirm;
+use Illuminate\Support\Facades\Log;
 
 class ReceptionController extends Controller
 {
@@ -15,6 +18,41 @@ class ReceptionController extends Controller
         return Inertia::render('Reception/Start');
     }
 
+    public function confirmVideo(Request $request, string $token)
+    {
+        $rec = Reception::whereToken($token)->firstOrFail();
+
+        Log::info('confirmVideo', $request->all());
+        Log::info('token', ['token' => $token]);
+        $data = $request->validate([
+            'video_id' => 'required|exists:videos,id',
+            'video_type' => 'required|string',
+        ]);
+
+        Log::info('confirmVideo after validation', $data);
+        /*
+        ReceptionVideoConfirm::updateOrCreate(
+            [
+                'reception_id' => $rec->id,
+                'video_id'     => $data['video_id'],
+                'video_type'   => $data['video_type'],
+                'confirmed_at' => now(),
+            ]
+        );
+        */
+        ReceptionVideoConfirm::updateOrCreate(
+            [
+                'reception_id' => $rec->id,
+                'video_id'     => $request->video_id,
+                'video_type'   => $request->video_type,
+            ],
+            [
+                'confirmed_at' => now(),
+            ]
+        );
+
+        return response()->json(['ok' => true]);
+    }
     public function faceUpload(Request $request, string $token)
     {
         $rec = Reception::whereToken($token)->firstOrFail();

@@ -12,6 +12,110 @@ const faceList = ref([]);
 const signatureList = ref([]);
 const sessionSummary = ref([]);
 
+// ▼ 動画登録モーダル
+const showVideoModal = ref(false);
+const uploadingVideo = ref(false);
+
+const videoForm = ref({
+    title: "",
+    description: "",
+    file: null,
+});
+
+// ▼ 動画一覧
+const showVideoListModal = ref(false);
+const videos = ref([]);
+
+// ▼ 有効/無効 確認ダイアログ
+const showVideoConfirm = ref(false);
+const confirmTarget = ref(null);
+const confirmAction = ref(null); // 'activate' | 'deactivate'
+
+async function loadVideoList() {
+    const res = await fetch("/operation/videos", {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    videos.value = await res.json();
+    showVideoListModal.value = true;
+}
+
+function confirmVideo(video, action) {
+    confirmTarget.value = video;
+    confirmAction.value = action;
+    showVideoConfirm.value = true;
+}
+
+async function executeVideoAction() {
+    const v = confirmTarget.value;
+    if (!v) return;
+
+    const url =
+        confirmAction.value === "activate"
+            ? `/operation/videos/${v.id}/activate`
+            : `/operation/videos/${v.id}/deactivate`;
+
+    await fetch(url, {
+        method: "POST",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+
+    showVideoConfirm.value = false;
+    await loadVideoList(); // 再読込
+}
+
+
+// ファイル選択
+function onVideoSelect(e) {
+    videoForm.value.file = e.target.files[0] ?? null;
+}
+
+// 動画アップロード
+async function uploadVideo() {
+    if (!videoForm.value.title || !videoForm.value.file) {
+        alert("タイトルと動画ファイルは必須です");
+        return;
+    }
+
+    uploadingVideo.value = true;
+
+    try {
+        const fd = new FormData();
+        fd.append("title", videoForm.value.title);
+        fd.append("description", videoForm.value.description || "");
+        fd.append("video", videoForm.value.file);
+
+        const res = await fetch("/operation/videos", {
+            method: "POST",
+            headers: {
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            body: fd,
+        });
+
+        if (!res.ok) throw new Error("upload failed");
+
+        // 成功
+        showVideoModal.value = false;
+
+        // フォーム初期化
+        videoForm.value = {
+            title: "",
+            description: "",
+            file: null,
+        };
+
+        alert("動画を登録しました（既存動画は無効化されています）");
+    } catch (e) {
+        console.error(e);
+        alert("動画登録に失敗しました");
+    } finally {
+        uploadingVideo.value = false;
+    }
+}
+
+
+
+
 // ▼ 顔一覧読み込み
 async function loadFaceCaptures() {
     const res = await fetch("/operation/face-captures-json", {
@@ -119,6 +223,19 @@ onUnmounted(() => clearInterval(timer));
             >
                 顔＋署名（セッション別）一覧
             </button>
+            <button
+                class="px-4 py-2 bg-emerald-600 text-white rounded-lg shadow hover:bg-emerald-700"
+                @click="showVideoModal = true"
+            >
+                動画登録
+            </button>
+            <button
+                class="px-4 py-2 bg-slate-700 text-white rounded-lg shadow hover:bg-slate-800"
+                @click="loadVideoList"
+            >
+                動画一覧
+            </button>
+
         </div>
         <!-- 上部に戻るボタン -->
         <div class="flex items-center justify-between mb-4">
@@ -301,6 +418,148 @@ onUnmounted(() => clearInterval(timer));
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+<!-- 動画登録モーダル -->
+<div
+    v-if="showVideoModal"
+    class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+>
+    <div class="bg-white rounded-xl p-6 w-[90%] max-w-lg shadow-xl relative">
+        <button
+            class="absolute top-3 right-3 text-gray-600 hover:text-black"
+            @click="showVideoModal = false"
+        >
+            ✖
+        </button>
+
+        <h2 class="text-lg font-semibold mb-4">
+            固定動画 登録
+        </h2>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium mb-1">タイトル</label>
+                <input
+                    v-model="videoForm.title"
+                    type="text"
+                    class="w-full border rounded px-3 py-2"
+                    placeholder="例：本人確認説明動画"
+                />
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium mb-1">説明（任意）</label>
+                <textarea
+                    v-model="videoForm.description"
+                    class="w-full border rounded px-3 py-2"
+                    rows="3"
+                ></textarea>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium mb-1">動画ファイル</label>
+                <input
+                    type="file"
+                    accept="video/mp4,video/webm"
+                    @change="onVideoSelect"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                    mp4 / webm（登録すると既存動画は無効になります）
+                </p>
+            </div>
+
+            <button
+                class="w-full py-2 rounded text-white"
+                :class="uploadingVideo
+                    ? 'bg-gray-400'
+                    : 'bg-emerald-600 hover:bg-emerald-700'"
+                :disabled="uploadingVideo"
+                @click="uploadVideo"
+            >
+                {{ uploadingVideo ? "アップロード中..." : "登録する" }}
+            </button>
+        </div>
+    </div>
+</div>
+<!-- 動画一覧モーダル -->
+<div v-if="showVideoListModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl p-6 w-[90%] max-w-4xl shadow-xl relative">
+        <button class="absolute top-3 right-3" @click="showVideoListModal=false">✖</button>
+
+        <h2 class="text-xl font-bold mb-4">動画一覧</h2>
+
+        <div class="space-y-3 max-h-[70vh] overflow-y-auto">
+            <div
+                v-for="v in videos"
+                :key="v.id"
+                class="border rounded-lg p-4 flex items-center justify-between"
+            >
+                <div>
+                    <div class="font-medium">
+                        {{ v.title }}
+                        <span
+                            v-if="v.is_active"
+                            class="ml-2 text-xs px-2 py-1 rounded bg-green-100 text-green-700"
+                        >
+                            有効
+                        </span>
+                    </div>
+
+                    <div class="text-xs text-gray-500 mt-1">
+                        {{ v.public_url }}
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button
+                        v-if="!v.is_active"
+                        class="px-3 py-1 text-xs rounded bg-emerald-600 text-white"
+                        @click="confirmVideo(v, 'activate')"
+                    >
+                        有効化
+                    </button>
+
+                    <button
+                        v-if="v.is_active"
+                        class="px-3 py-1 text-xs rounded bg-red-600 text-white"
+                        @click="confirmVideo(v, 'deactivate')"
+                    >
+                        無効化
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- 確認ダイアログ -->
+<div v-if="showVideoConfirm" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl p-6 w-[90%] max-w-sm shadow-xl">
+        <h3 class="font-semibold mb-3">
+            動画{{ confirmAction === 'activate' ? '有効化' : '無効化' }}確認
+        </h3>
+
+        <p class="text-sm text-gray-700 mb-4">
+            「{{ confirmTarget?.title }}」を
+            {{ confirmAction === 'activate' ? '有効にしますか？（他の動画は無効になります）' : '無効にしますか？' }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+            <button
+                class="px-3 py-1 rounded border"
+                @click="showVideoConfirm=false"
+            >
+                キャンセル
+            </button>
+
+            <button
+                class="px-3 py-1 rounded text-white"
+                :class="confirmAction === 'activate' ? 'bg-emerald-600' : 'bg-red-600'"
+                @click="executeVideoAction"
+            >
+                実行
+            </button>
         </div>
     </div>
 </div>

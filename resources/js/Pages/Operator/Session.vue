@@ -3,6 +3,12 @@
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import io from "socket.io-client";
 
+const selectedVideoId = ref("");
+const videos = ref([]);
+// 動画確認状態
+const requiredVideoConfirmed = ref(false);
+const confirmedVideos = ref([]);
+
 /* ==============================
    ■ props
 ============================== */
@@ -70,6 +76,24 @@ async function loadSessionSummary() {
     showSessionSummaryModal.value = true;
 }
 
+async function loadVideos() {
+    const res = await fetch("/operation/videos-json", {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    videos.value = await res.json();
+}
+async function loadVideoStatus() {
+    console.log("Loading video status..."+props.reception.token);
+    const res = await fetch(
+        `/api/receptions/${props.reception.token}/video-status`,
+        { headers: { "X-Requested-With": "XMLHttpRequest" } }
+    );
+
+    const json = await res.json();
+    console.log("Video status:", json);
+    requiredVideoConfirmed.value = json.required_confirmed;
+    confirmedVideos.value = json.confirmed_videos;
+}
 /* ==============================
    ■ Heartbeat
 ============================== */
@@ -181,12 +205,23 @@ async function joinCall() {
 
         pc.onicecandidate = (e) => {
             if (e.candidate && socket && roomId)
-                socket.emit("ice-candidate", { roomId, candidate: e.candidate });
+                socket.emit("ice-candidate", {
+                    roomId,
+                    candidate: e.candidate,
+                });
         };
 
         // --- Socket.IO ---
         socket = io(SIGNALING_URL, { transports: ["websocket"] });
 
+        socket.on("phase-change", ({ phase, video_id }) => {
+            if (phase !== "video_confirmed") return;
+
+            console.log("[operator] video confirmed", video_id);
+
+            // 再取得（安全）
+            loadVideoStatus();
+        });
         /* ==============================
            ★★★ Phase-change（完全統合版） ★★★
         =============================== */
@@ -306,10 +341,25 @@ function sendPhase(phase) {
     console.log("[operator] sent phase:", phase);
 }
 
+function sendVideo(type) {
+    if (!socket || !socket.connected || !roomId) return;
+
+    socket.emit("phase-change", {
+        roomId,
+        phase: "video",
+        video_type: type, // required | optional
+        video_id: selectedVideoId.value,
+    });
+
+    console.log("[operator] send video", type, selectedVideoId.value);
+}
+
 /* ==============================
    ■ Mounted / Unmounted
 ============================== */
 onMounted(() => {
+    loadVideos();
+    loadVideoStatus();
     joinCall();
     heartbeat();
     hbTimer = setInterval(heartbeat, 5000);
@@ -404,6 +454,82 @@ onBeforeUnmount(() => {
                     >
                         署名
                     </button>
+                    <select
+                        v-model="selectedVideoId"
+                        class="w-full border rounded p-2 mb-2"
+                    >
+                        <option disabled value="">
+                            動画を選択してください
+                        </option>
+                        <option v-for="v in videos" :key="v.id" :value="v.id">
+                            {{ v.title }}
+                        </option>
+                    </select>
+                    <button
+                        class="w-full h-12 rounded-xl border hover:bg-slate-50 disabled:opacity-50"
+                        :disabled="requiredVideoConfirmed"
+                        @click="sendVideo('required')"
+                    >
+                        必須動画
+                    </button>
+                    <button
+                        class="w-full h-12 rounded-xl border hover:bg-slate-50 disabled:opacity-50"
+                        :disabled="!selectedVideoId"
+                        @click="sendVideo('optional')"
+                    >
+                        車両別説明動画
+                    </button>
+                </div>
+            </div>
+            <div class="rounded-xl border p-4 bg-white mt-3">
+                <div class="font-semibold mb-2">動画確認状況</div>
+
+                <!-- 必須動画 -->
+                <div class="flex items-center gap-2 mb-2">
+                    <span>必須動画：</span>
+                    <span
+                        v-if="requiredVideoConfirmed"
+                        class="text-green-600 font-semibold"
+                    >
+                        ✅ 確認済み
+                    </span>
+                    <span v-else class="text-red-600 font-semibold">
+                        ⏳ 未確認
+                    </span>
+                </div>
+
+                <!-- 任意動画 -->
+                <div class="mt-2">
+                    <div class="font-semibold text-sm mb-1">
+                        説明動画（任意）
+                    </div>
+
+                    <div
+                        v-if="
+                            confirmedVideos.filter(
+                                (v) => v.video_type === 'optional'
+                            ).length === 0
+                        "
+                        class="text-gray-500 text-sm"
+                    >
+                        まだ確認されていません
+                    </div>
+
+                    <ul class="text-sm space-y-1">
+                        <li
+                            v-for="v in confirmedVideos.filter(
+                                (v) => v.video_type === 'optional'
+                            )"
+                            :key="v.video_id"
+                            class="flex items-center gap-2"
+                        >
+                            <span class="text-green-600">✅</span>
+                            <span>動画ID: {{ v.video_id }}</span>
+                            <span class="text-gray-400 text-xs">
+                                ({{ v.confirmed_at }})
+                            </span>
+                        </li>
+                    </ul>
                 </div>
             </div>
 
@@ -412,9 +538,7 @@ onBeforeUnmount(() => {
                 v-if="lastCapturedFace"
                 class="rounded-xl border p-4 bg-white shadow"
             >
-                <div class="text-sm font-semibold mb-2">
-                    最新の本人確認画像
-                </div>
+                <div class="text-sm font-semibold mb-2">最新の本人確認画像</div>
                 <img :src="lastCapturedFace" class="w-full rounded border" />
             </div>
 
